@@ -1,0 +1,13 @@
+{
+  "name": "bloxtube",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BloxTube — a modern video-platform prototype with a real account backend (zero dependencies).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

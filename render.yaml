@@ -1,0 +1,18 @@
+# Render Blueprint — deploys BloxTube as a free web service.
+# On render.com: New + -> Blueprint (or Web Service) -> pick your GitHub repo.
+services:
+  - type: web
+    name: bloxtube
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      # Optional but recommended: makes accounts persist across restarts.
+      # Create a free Redis at upstash.com and paste its REST URL + token here
+      # (or in the Render dashboard -> Environment). Leave blank to use a
+      # local file (fine for testing; resets when the free instance restarts).
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
