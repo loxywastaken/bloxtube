@@ -38,6 +38,7 @@ const EMPTY_DB = () => ({
   history: {}, progress: {},
   flags: { bloxclips:true, uploads:true, comments:true, live:true, podcasts:true, ai_features:true, signups:true },
   announcements: [], audit: [],
+  maintenance: false, maintenanceMsg: '',
   meta: { createdAt: Date.now() }
 });
 // Storage: local JSON file by default. If Upstash Redis env vars are set
@@ -121,7 +122,8 @@ function route(method, pattern, handler){ const keys=[]; const rx=new RegExp('^'
 
 /* ---- config / public ---- */
 route('GET','/api/config',(ctx)=>({ appName:'BloxTube', signupsOpen:DB.flags.signups!==false, userCount:DB.users.length,
-  announcement:(DB.announcements.find(a=>a.active)||null), flags:DB.flags }));
+  announcement:(DB.announcements.find(a=>a.active)||null), flags:DB.flags,
+  maintenance:DB.maintenance===true, maintenanceMsg:DB.maintenanceMsg||'' }));
 
 /* ---- auth ---- */
 route('POST','/api/auth/signup',(ctx)=>{
@@ -220,6 +222,10 @@ route('DELETE','/api/videos/:id',(ctx)=>{ const u=requireUser(ctx); const v=DB.v
   unlinkMedia(v.src); unlinkMedia(v.poster); DB.videos=DB.videos.filter(x=>x!==v); DB.comments=DB.comments.filter(c=>c.videoId!==v.id); DB.playlists.forEach(p=>p.items=p.items.filter(i=>i!==v.id)); saveDB(); return {ok:true}; });
 route('POST','/api/videos/:id/view',(ctx)=>{ const v=DB.videos.find(x=>x.id===ctx.params.id); if(!v)throw new HttpError(404,'Not found.'); v.views=(v.views||0)+1;
   if(ctx.user){ const h=DB.history[ctx.user.id]=DB.history[ctx.user.id]||[]; const i=h.indexOf(v.id); if(i>=0)h.splice(i,1); h.unshift(v.id); if(h.length>500)h.length=500; } saveDB(); return {views:v.views}; });
+route('POST','/api/videos/:id/end-live',(ctx)=>{ const u=requireUser(ctx); const v=DB.videos.find(x=>x.id===ctx.params.id); if(!v)throw new HttpError(404,'Not found.');
+  if(v.ownerId!==u.id&&u.role!=='admin'&&u.role!=='owner')throw new HttpError(403,'Only the streamer can end this stream.');
+  if(v.kind!=='live')throw new HttpError(400,'This is not a live stream.');
+  v.kind='video'; v.wasLive=true; v.endedAt=now(); if(!v.dur)v.dur=Math.max(1,Math.round((now()-v.createdAt)/1000)); saveDB(); return {video:pubVideo(v)}; });
 route('POST','/api/videos/:id/like',(ctx)=>{ const u=requireUser(ctx); const v=DB.videos.find(x=>x.id===ctx.params.id); if(!v)throw new HttpError(404,'Not found.'); const type=ctx.body.type==='dislike'?'dislike':'like';
   const ex=DB.likes.find(l=>l.userId===u.id&&l.targetId===v.id);
   if(ex&&ex.type===type){ DB.likes=DB.likes.filter(l=>l!==ex); }
@@ -263,9 +269,11 @@ route('GET','/api/search',(ctx)=>{ const s=(ctx.query.q||'').toLowerCase(); cons
 
 /* ===================================================================== ADMIN ===================================================================== */
 route('GET','/api/admin/overview',(ctx)=>{ requireAdmin(ctx);
+  let mediaFiles=0, mediaBytes=0; try{ ensureMediaDir(); for(const f of fs.readdirSync(MEDIA_DIR)){ try{ const st=fs.statSync(path.join(MEDIA_DIR,f)); if(st.isFile()){ mediaFiles++; mediaBytes+=st.size; } }catch(e){} } }catch(e){}
   return { stats:{ users:DB.users.length, videos:DB.videos.filter(v=>v.status==='published').length, clips:DB.videos.filter(v=>v.kind==='clip').length,
     comments:DB.comments.length, reports:DB.reports.filter(r=>r.status==='pending').length, sessions:DB.sessions.length,
-    subscriptions:DB.subscriptions.length, views:DB.videos.reduce((a,v)=>a+(v.views||0),0), suspended:DB.users.filter(u=>u.status!=='active').length },
+    subscriptions:DB.subscriptions.length, views:DB.videos.reduce((a,v)=>a+(v.views||0),0), suspended:DB.users.filter(u=>u.status!=='active').length,
+    live:DB.videos.filter(v=>v.kind==='live').length, mediaFiles, mediaBytes, maintenance:DB.maintenance===true },
     recentUsers:DB.users.slice(-6).reverse().map(pubUser), recentReports:DB.reports.slice(0,6) }; });
 route('GET','/api/admin/users',(ctx)=>{ requireAdmin(ctx); const q=(ctx.query.q||'').toLowerCase(); return {users:DB.users.filter(u=>!q||(u.handle+u.displayName+u.email).toLowerCase().includes(q)).map(u=>Object.assign(pubUser(u),{email:u.email})).reverse()}; });
 route('PATCH','/api/admin/users/:id',(ctx)=>{ const admin=requireAdmin(ctx); const u=DB.users.find(x=>x.id===ctx.params.id); if(!u)throw new HttpError(404,'User not found.'); const b=ctx.body||{};
@@ -284,6 +292,8 @@ route('PATCH','/api/admin/reports/:id',(ctx)=>{ const admin=requireAdmin(ctx); c
   if(b.action==='remove'&&r.targetKind==='video'){ const v=DB.videos.find(x=>x.id===r.targetId); if(v)v.status='removed'; } audit(admin.id,'report '+(b.action||b.status||'update'),r.targetId); saveDB(); return {report:r}; });
 route('GET','/api/admin/flags',(ctx)=>{ requireAdmin(ctx); return {flags:DB.flags}; });
 route('PATCH','/api/admin/flags',(ctx)=>{ const admin=requireAdmin(ctx); Object.assign(DB.flags,ctx.body||{}); audit(admin.id,'updated feature flags',Object.keys(ctx.body||{}).join(',')); saveDB(); return {flags:DB.flags}; });
+route('GET','/api/admin/maintenance',(ctx)=>{ requireAdmin(ctx); return {maintenance:DB.maintenance===true, maintenanceMsg:DB.maintenanceMsg||''}; });
+route('PATCH','/api/admin/maintenance',(ctx)=>{ const admin=requireAdmin(ctx); const b=ctx.body||{}; if(b.on!==undefined)DB.maintenance=!!b.on; if(b.message!==undefined)DB.maintenanceMsg=String(b.message).slice(0,300); audit(admin.id,'maintenance '+(DB.maintenance?'ON':'OFF'),DB.maintenanceMsg); saveDB(); return {maintenance:DB.maintenance===true, maintenanceMsg:DB.maintenanceMsg||''}; });
 route('GET','/api/admin/announcements',(ctx)=>{ requireAdmin(ctx); return {announcements:DB.announcements}; });
 route('POST','/api/admin/announcements',(ctx)=>{ const admin=requireAdmin(ctx); DB.announcements.forEach(a=>a.active=false); const a={id:uid('an_'),text:String((ctx.body||{}).text||'').slice(0,300),active:true,createdAt:now()}; DB.announcements.unshift(a); audit(admin.id,'broadcast announcement',a.text); saveDB(); return {announcement:a}; });
 route('DELETE','/api/admin/announcements/:id',(ctx)=>{ requireAdmin(ctx); DB.announcements=DB.announcements.filter(a=>a.id!==ctx.params.id); saveDB(); return {ok:true}; });
@@ -362,6 +372,11 @@ const server=http.createServer(async (req,res)=>{
       const query=Object.fromEntries(u.searchParams);
       const body=(req.method==='POST'||req.method==='PATCH'||req.method==='PUT')?await readBody(req):{};
       const ctx={ req,res,params,query,body, user:userFrom(req), ip:(req.headers['x-forwarded-for']||req.socket.remoteAddress||'?').split(',')[0].trim(), ua:(req.headers['user-agent']||'').slice(0,160) };
+      // maintenance mode: block non-admin writes (auth + admin routes always allowed)
+      if(DB.maintenance && (req.method==='POST'||req.method==='PATCH'||req.method==='PUT'||req.method==='DELETE') && !pathname.startsWith('/api/auth/') && !pathname.startsWith('/api/admin/')){
+        const isAdmin=ctx.user&&(ctx.user.role==='admin'||ctx.user.role==='owner');
+        if(!isAdmin) throw new HttpError(503,'BloxTube is down for maintenance — please check back soon.');
+      }
       const out=await match.handler(ctx);
       send(res,200,out==null?{ok:true}:out);
     }catch(e){ if(e instanceof HttpError)send(res,e.status,{error:e.message}); else { console.error(e); send(res,500,{error:'Server error.'}); } }

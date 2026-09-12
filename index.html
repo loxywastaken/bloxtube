@@ -41,6 +41,34 @@
   --inset-gloss:inset 0 1px 0 rgba(255,255,255,.9), inset 0 0 0 .5px rgba(255,255,255,.5);
   --ring:0 0 0 3px rgba(0,122,255,.4);
 }
+:root[data-theme="youtube"]{
+  --bg0:#f9f9f9; --bg1:#ffffff; --bg2:#f2f2f2;
+  --blob-a:#f1f1f1; --blob-b:#ececec; --blob-c:#f4f4f4; --blob-d:#eeeeee;
+  --glass:#ffffff; --glass-2:#f2f2f2; --glass-3:#e5e5e5;
+  --glass-brd:#e5e5e5; --glass-brd-2:#d3d3d3; --gloss:rgba(255,255,255,.9);
+  --text:#0f0f0f; --text-dim:#606060; --text-faint:#909090;
+  --brand:#ff0000; --brand-2:#ff4e45; --brand-grad:linear-gradient(135deg,#ff4e45,#ff0000);
+  --accent:#065fd4; --accent-2:#3b82f6; --accent-grad:linear-gradient(135deg,#3b82f6,#065fd4);
+  --live:#ff0033; --success:#2ba640; --warning:#e0a100; --danger:#cc0000; --plus:#065fd4;
+  --blur:0px; --sat:100%;
+  --shadow:0 1px 2px rgba(0,0,0,.1); --shadow-lg:0 4px 20px rgba(0,0,0,.14);
+  --inset-gloss:none; --ring:0 0 0 3px rgba(6,95,212,.4);
+  --r:12px; --r-sm:8px; --r-lg:16px;
+}
+:root[data-theme="tiktok"]{
+  --bg0:#000000; --bg1:#0a0a0a; --bg2:#161616;
+  --blob-a:#fe2c55; --blob-b:#25f4ee; --blob-c:#fe2c55; --blob-d:#25f4ee;
+  --glass:rgba(255,255,255,.06); --glass-2:rgba(255,255,255,.10); --glass-3:rgba(255,255,255,.16);
+  --glass-brd:rgba(255,255,255,.16); --glass-brd-2:rgba(255,255,255,.28); --gloss:rgba(255,255,255,.22);
+  --text:#ffffff; --text-dim:#a6a6b0; --text-faint:#70707b;
+  --brand:#fe2c55; --brand-2:#ff5c7a; --brand-grad:linear-gradient(135deg,#25f4ee,#fe2c55);
+  --accent:#25f4ee; --accent-2:#66f8f3; --accent-grad:linear-gradient(135deg,#25f4ee,#00c2ba);
+  --live:#fe2c55; --success:#25f4ee; --warning:#ffd60a; --danger:#fe2c55; --plus:#25f4ee;
+  --blur:22px; --sat:170%;
+  --shadow:0 8px 30px rgba(0,0,0,.6); --shadow-lg:0 20px 60px rgba(0,0,0,.75);
+  --ring:0 0 0 3px rgba(37,244,238,.5);
+  --r:18px; --r-sm:11px; --r-lg:24px;
+}
 :root[data-contrast="high"]{ --glass-brd:rgba(255,255,255,.5); --text-dim:#c9d2e8; }
 html,body{margin:0;height:100%}
 body{ background:var(--bg0); color:var(--text); font-family:var(--font); font-size:14.5px; line-height:1.45;
@@ -645,8 +673,9 @@ function confirmModal(title,msg,onYes,{danger,yes="Confirm"}={}){ openModal(`<p 
 
 /* ---------- helpers used by views ---------- */
 const LOGO=`<svg class="logo" viewBox="0 0 32 32" fill="none"><defs><linearGradient id="lgg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff6b8a"/><stop offset="1" stop-color="#c9268f"/></linearGradient></defs><rect x="1" y="4" width="30" height="24" rx="9" fill="url(#lgg)"/><rect x="1" y="4" width="30" height="11" rx="9" fill="#fff" opacity=".18"/><path d="M13 11.2v9.6l8-4.8z" fill="#fff"/></svg>`;
-const VTIER={ official:{t:"Verified",c:"#3ea6ff"}, artist:{t:"Official Artist",c:"#ff5c8a"}, identity:{t:"Verified",c:"#9aa0aa"}, business:{t:"Verified business",c:"#ffcf3f"} };
-function vbadge(u){ if(!u||!u.verified||!VTIER[u.verified])return ""; const t=VTIER[u.verified]; return `<span class="vchk" title="${t.t}" style="display:inline-flex;vertical-align:-2px;color:${t.c}">${icon("verified",13,"")}</span>`; }
+const VBADGE_IMG="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAKoUlEQVR42r1aa2xcxRX+zszd3bu7XifOo01DKNA2qAlVlU2AhlBiglrVqVoqITaI/qlKUNVKdUgIoFZUWlstQgISm7oSiIfgT6XKGyE1rSD/Uic80hYnFIkggVJCQuyosWPifd27d+ac/ri79jpeO+tHGMmSpb2a+c7rO2fOGWCuS4Rm/T0rCgDSPUPrNvaNDG/sGxlO9wytq/9t3ns3WGpOX2dFgUgAoUy/6AYIKHMTqArkBe1EV2knugrAC5Dqb5gOMtxLCERyRSEXujbvezter7F6Qdqzhx0ASO8/89itL3qS7jkXpHvOBbe+6El6/5nH6r+ZAF6n9Sl7N7maMlkmIzqXI5vuGbrHcVt6OSh/wiT7TnSuOljT/Pp+RE7uQLDh6U/X6XjyuDA7YBNqUzlMShlbLm5879HrPqx9C5AAQLrv/N1KaK+KxG8wXmH3iT2rX6udeSVsTjMC5JCr/buHIrFric21Wumtm/ouHCXYZ97tpIMnd6ACACoy/JLSsZgJ8paICADEGqhIKqYiwUsAbal9e3Pf+bsF+hFyoneALSgSA/zibgCv1Z25cAuEfkuysefcv1Qsscn6JQuI1m5KERGsV3xLwH+BoF27LfdaL89ESk2NT2btphR7hQMiOEJK3afd5O0iAuvlGSCrYwnNfmnw+J5rbq2duRgWCDcSIXl2OAURFepVKesVLBFIRZO3kxO9HdbAeuNyOXgAIFKKvbxot/VeaOdeMRVYL88iECKlAQFElBClINWADhUsCxQg3Oe6V0/HSGItIjxhOCLSAGArJYtKUSCgEMxMqlBkvLwFQQAiAmmiST2JMCBoaX/1dGwA8Gpnz5dGQ8oTELKivmLaEkKIQ3gaXxOgCeTUBJrVnETht4CelgOEASB+4WJbAllRkAnapaYEyPT365CHpWo6EhAxuomtR0SgJJibjpw58yEziCiZjBYI3cQg4mocCCCUzYrK9PfrJoNYqP0VxEqF8STbQlIEu1UsucdWikygq5JsBMI6mlRcKe8n8LNKSzHREhQHfn69P1NA00SG7SZO9wzdo2PJX9qg3ArmJSBKApIkkaSKJWNcKeGLWCqaAPslXwgFiJRBVAAwrqPJS9YvPn9iz+rXapipFvGb952JV5Q+56RWtrFfDPUhDAhDmAGxjKuk+Qa2YJBWpBRACkQKAEHFkjD5C2NRttcc2/vVMkRI1eqP2PipQIhOclA2tlIKOCizmAqLCQRi5WqAVxT+NaIriBUxgYipMAdlrmIyIDoZGz8V1OoyBQCZm0AD3duMCJ4gIicMblIAFIgIoEUPW01AwReUAoFuLASFZ09iISKHBU8MdG8zYWFYH8ShT0l6/2fvOPHUd4xXsM3Q4rzAK2CkyPjZpiQulhh//7CMFUkFwzNV2WIdt0Wbcv6fJx5ecxuyErJUPY1WJRJxVDdIAXRVyBKOAkaLjPs3JJH9/lI8/aM2bPuGi5Eiz+BOCLGQgjiqG4DUtD+dRrOi0AVJ9w69qd2WLdYv2mkJZ4HgR4qM+9NJ/OEHS2E5tEY5EDz8tzG8edpDzCGITKkDrI4ltfUKb5/Yvfq76MKE9qclso6LH0eqF5aXlRMFpmy1uOBZAKUAw0A8QnjszlZEFDU4UaSK5WUQScfFjyMNM3F79rBzqO9GHwAp5XSwqSBM5fNhkSuDJwJYwt+Gxy12/fUiDMt0uhAQmwqUcjoA0KG+G/36SxHV3AZEku49+22l433kRLayX5iV9zUBxUDADKRiBCtzAy8SCn8+b7EzN4pTowapGIGlYVoQ5aZITHCEbbnzxO5r34cIoWtSXtr0xwuPQlGX0tG48ca5UUl8Oajt34yjLa7w5xNFrGzAIs2C/+9Fg9YYzchCtfuE47YqtpUyWLoGd618GoDQzb1nvsXK7XPirXea0hiEeVb6VASMlRl33ODi+XuWIeYQfvP6GHLvl6ZQ4WKCr6dTUko7iTYYLz+grPk1pXuGRhy3Zbnx8oYAXU0eM5TCQMUINl8XQ++PlyERDV1HE/DbNz5H/3+KWJEMDTeTz2sChvMWD84RfL0UAljHTTnGK4w6c6pQBNCK8PhdS5CIhgdrFQJ7cvtSAMCB94sAgJ+mk/h9A/DnFwK+USyu2f7I60y8PpJo+xobn0TEEjUOXiLAWMGxMz7u+rqLVldBqgAhwPfWujg9ZrH+yxE8ub1titvoercZNWh15w6+6kIqklymrF/8h0blvjkHsSIg7zPWrojg5cxyfKlFTwClBpdRvhz8PDU/UxCr8OomGNy18ik25c1s/CPaTSlIQ0IDC7DEVfh4xGBnbhT/K1goapzyGmp+Xm4jYUfDVI6wKW8e3LXyKYgAWZlMQ+3Zw85A9zYDAJuePd+vovHMbAWdo4BLnmDtCmeKJWo72kXTvFjttmiplHODD626D4DUY51wk4Hubaaj86MYADCbQ+REEXYPGi/DwBKXplmCZfHcptasUE4UzOYQAOno/ChWAz+tFjq0bG0QdhxoJ5sKrnQPmEkItVjgq9RRxbITInRo2dqgYS2U6ReNbuINfcMdTrx1i/UL3EwlWi/EA7lRjJUZI0XGA/2LQ5UEaOsX2Im3btnQN9yBbuL6hvJEHsh9ELoLGc4iwoBcqZRrLMQvDoyCBTh10WCpu3Cer7UrIBxiAw7VsE7cBzL9onM7yG7oGdoeibe8bsr5ed3GNAFlE+4dd2Yu8OYlg4h14ikdlAs/fG/P6jdqmFVN++3Zw46C/E5EDICwHQEwRKTZe4EVwHUI7qKAFwnPnsQiIkYRHs/0i65Zwam2VdjfdyYGYJ2KxB0wz7utwoui9WpbRSuAVLUwIKUicbBXWH/27NkousO2ilNrqxzbS+WNved2cqX8K2v8amMLSQAJEmn5YhtbScV+0WfhAoASBEUodQmkxkF47tjer5arbRWeNUzbX/nELRUiSbaUFKiHVDT+8BfeWhwJigPdN3hNDTgy/f0690FG0F1t7NatW/o+W26t/oyIXAkbXYvctRAh0iQintZ2zb8714xe3qvNZkEnb8pRbscO28yEhsKmMAhdwPrWS0tjqvSRcpzlYgKZ7d4wX5ohJ0JszKjPiRtPji/5HF2oVgOEmQYdavbJBgkIgm7i4vhYCYRS2DOaah0BrECMiNhm6FAgRgB7WcKVaj+qVBwfK4Xt9QlPkAXMiUNFf9p1vQ+gGDKCTIABhHU0oZ1Em+O4KT1TFVu7nDtuSjuJNkdHExoQnhRaqk1cFKtnNTXCU03FVm0IDRkHKRaBDYd2LVq7KcWV0lumdKnTevkDyk2RCHOjel65KbJe/oApXerkSukt7aaUdlu0CLMIbDjQwHhtmH6l+VjTY1Zkcgo5WED5KhpXEFZQGmIqRwH7zPHdq6vzYvxpY+/Q247bepvxJrN5WBK3avaL7xzfc02m9m1tzKrd1B1gq1Q0AVvx/KlnLtwCyCBTU2OvBN5ZscERy5W7BztXbn23c9XBcNAtUUCIg8qDbH2ftFO90oiQdiDW9znwH6z/9t3OVQcHO1dutab8E7HBEQm8sxDpnXLmYq/27Cfu1XpqMGXvq7ImHmLM8tijCirdM3T0lufG5ZbnxiXdM3R0UthZHntMOePqjX/m9Nxm01ye22Duz23+D6aKnPVp2EmYAAAAAElFTkSuQmCC";
+const VTIER={ official:{t:"Verified"}, artist:{t:"Official Artist"}, identity:{t:"Verified"}, business:{t:"Verified business"} };
+function vbadge(u,size){ if(!u||!u.verified||!VTIER[u.verified])return ""; size=size||15; return `<img class="vchk" src="${VBADGE_IMG}" alt="Verified" title="${VTIER[u.verified].t}" style="width:${size}px;height:${size}px;vertical-align:-3px;display:inline-block;flex:none">`; }
 function emptyState(ic,title,sub,btn){ const d=el("div",{class:"empty"}); d.innerHTML=`<div class="ec">${icon(ic,44)}</div><h3>${esc(title)}</h3><p>${esc(sub||"")}</p>`; if(btn){const b=el("button",{class:"btn brand big",style:"margin-top:16px",onclick:btn.onClick},btn.label);d.append(b);} return d; }
 function pageHead(title,sub,ic){ const h=el("div",{style:"margin-bottom:20px"}); h.innerHTML=`<h1 style="margin:0;font-size:26px;font-weight:800;letter-spacing:-.02em;display:flex;align-items:center;gap:10px">${ic?icon(ic,26):""}${esc(title)}</h1>${sub?`<p style="color:var(--text-dim);margin:6px 0 0">${esc(sub)}</p>`:""}`; return h; }
 function chipBar(chips,active,onPick){ const bar=el("div",{class:"chipbar"}); chips.forEach(c=>{const b=el("button",{class:"chip"+(c===active?" active":"")},c);b.onclick=()=>onPick(c);bar.append(b);}); return bar; }
@@ -759,6 +788,7 @@ const App={ main:null,side:null,subsCache:null,reqId:0,
     let node; try{ node=await fn((match&&match.params)||{},query,path); }catch(err){ if(rid!==this.reqId)return; console.error(err); node=errViewNode(err); }
     if(rid!==this.reqId)return;
     this.main.innerHTML=""; const ann=Auth.config&&Auth.config.announcement; if(ann&&!path.startsWith("/admin")){ const b=el("div",{style:"margin:14px 24px 0;padding:12px 16px;border-radius:14px;display:flex;gap:10px;align-items:center;background:linear-gradient(135deg,rgba(255,214,10,.18),rgba(255,55,95,.14));border:1px solid var(--glass-brd)"}); b.innerHTML=`${icon("bell",18)}<div style="flex:1;font-size:13.5px">${esc(ann.text)}</div>`; this.main.append(b); }
+    if(Auth.config&&Auth.config.maintenance&&!path.startsWith("/admin")){ const mb=el("div",{style:"margin:14px 24px 0;padding:12px 16px;border-radius:14px;display:flex;gap:10px;align-items:center;background:var(--warning);color:#2a2400"}); mb.innerHTML=`${icon("warn",18)}<div style="flex:1;font-size:13.5px"><b>Maintenance mode is ON</b> — only admins can reach the site right now. <span data-nav="/admin/site" style="text-decoration:underline;cursor:pointer">Manage</span></div>`; this.main.append(mb); }
     if(node)this.main.append(node); this.main.scrollTop=0; this.setActiveNav(); this.updateNotif();
     try{$("#main").focus({preventScroll:true});}catch(e){} },
 };
@@ -963,7 +993,9 @@ V.watch=async(params,query)=>{ Mini.close(); let data; try{ data=await API.get("
   const acts=el("div",{class:"w-actions"}); acts.append(likeControls(v,data.liked),actionPill("share","Share",()=>openShare(v)),actionPill("save","Save",()=>openSaveToPlaylist(v)));
   const moreB=el("button",{class:"btn icon",onclick:e=>openMenu(e.currentTarget,[{icon:"transcript",label:"Show transcript",onClick:()=>toggleTranscript(v,side)},{icon:"flag",label:"Report",onClick:()=>openReport({targetKind:"video",targetId:v.id})}])}); moreB.innerHTML=icon("more",20); acts.append(moreB);
   bar.append(chanBox,acts); main.append(bar);
-  if(v.isLive)main.append(el("div",{class:"info-panel"},el("span",{html:icon("live",18)}),el("div",{html:`<b>Live now</b> · ${fmtN(v.views)} watching · started ${ago(v.createdAt)}`})));
+  if(v.isLive){ const lp=el("div",{class:"info-panel"}); lp.innerHTML=`<span>${icon("live",18)}</span><div style="flex:1"><b>Live now</b> · ${fmtN(v.views)} watching · started ${ago(v.createdAt)}</div>`;
+    if(Auth.user&&(v.ownerId===Auth.user.id||Auth.isAdmin())){ const eb=el("button",{class:"btn sm",style:"background:var(--danger);color:#fff;border:0"}); eb.innerHTML=icon("block",16)+" End stream"; eb.onclick=()=>confirmModal("End this stream?","This ends the livestream and turns it into a regular video on your channel.",async()=>{try{await API.post("/api/videos/"+v.id+"/end-live");toast("Stream ended — saved to your channel",{type:"ok"});App.route();}catch(x){toast(x.message,{type:"err"});}},{danger:true,yes:"End stream"}); lp.append(eb); }
+    main.append(lp); }
   main.append(descriptionBox(v,side));
   main.append(await commentsSection(v));
   // side
@@ -1173,7 +1205,12 @@ function toggleCtl(get,set){ const l=el("label",{class:"switch"}); l.innerHTML=`
 function segCtl(opts,get,set){ const s=el("div",{class:"seg"}); opts.forEach(o=>{const b=el("button",{class:get()===o[1]?"active":""},o[0]);b.onclick=()=>{set(o[1]);s.querySelectorAll("button").forEach(x=>x.classList.remove("active"));b.classList.add("active");};s.append(b);}); return s; }
 V.settings=async()=>{ const wrap=el("div",{class:"main-pad",style:"max-width:820px"}); wrap.append(pageHead("Settings","","settings"));
   const appc=el("div",{class:"card",style:"margin-bottom:16px"}); appc.innerHTML=`<b>Appearance</b>`;
-  appc.append(settingRow("Theme","Glossy glass — Dark or Light",segCtl([["Dark","dark"],["Light","light"]],()=>Prefs.get("theme"),v=>{Prefs.set("theme",v);applyPrefs();})),
+  const THEMES=[["dark","Dark glass","#0d1226","#ff375f"],["light","Light glass","#e9eefb","#ff2d55"],["youtube","YouTube","#ffffff","#ff0000"],["tiktok","TikTok","#000000","#fe2c55"]];
+  const themeCtl=el("div",{style:"display:flex;gap:8px;flex-wrap:wrap"});
+  const paintTheme=()=>themeCtl.querySelectorAll("[data-th]").forEach(b=>{b.style.borderColor=(b.dataset.th===Prefs.get("theme"))?"var(--accent)":"var(--glass-brd)";});
+  THEMES.forEach(([id,name,bg,ac])=>{ const b=el("button",{class:"btn sm"}); b.dataset.th=id; b.style.cssText="gap:8px;border:2px solid var(--glass-brd)"; b.innerHTML=`<span style="width:15px;height:15px;border-radius:5px;display:inline-block;vertical-align:-2px;background:${bg};box-shadow:inset 0 0 0 2px ${ac}"></span> ${name}`; b.onclick=()=>{Prefs.set("theme",id);applyPrefs();paintTheme();toast(name+" theme");}; themeCtl.append(b); });
+  paintTheme();
+  appc.append(settingRow("Theme","Pick your look — glass, YouTube, or TikTok",themeCtl),
     settingRow("High contrast",null,toggleCtl(()=>Prefs.get("contrast")==="high",v=>{Prefs.set("contrast",v?"high":"normal");applyPrefs();})),
     settingRow("Reduced motion",null,segCtl([["Auto","auto"],["On","reduced"],["Off","normal"]],()=>Prefs.get("motion"),v=>{Prefs.set("motion",v);applyPrefs();})),
     settingRow("Text size",null,segCtl([["Normal","normal"],["Large","large"],["XL","xl"]],()=>Prefs.get("textscale"),v=>{Prefs.set("textscale",v);applyPrefs();})),
@@ -1252,7 +1289,7 @@ V.studio=async(params)=>{ const tab=params.tab||"dashboard"; if(tab==="upload")r
   } return studioLayout(tab,c); };
 
 /* ================================================================== ADMIN ================================================================== */
-const ADMIN_NAV=[["overview","chart","Overview"],["users","users","Users"],["content","library","Content"],["reports","flag","Reports"],["flags","target","Feature flags"],["announce","bell","Announcements"],["sessions","globe","Sessions"],["audit","lock","Audit log"]];
+const ADMIN_NAV=[["overview","chart","Overview"],["site","settings","Site & maintenance"],["users","users","Users"],["content","library","Content"],["reports","flag","Reports"],["flags","target","Feature flags"],["announce","bell","Announcements"],["sessions","globe","Sessions"],["audit","lock","Audit log"]];
 V.admin=async(params)=>{ if(!Auth.isAdmin()){ const w=el("div",{class:"main-pad"}); w.append(emptyState("lock","Admin access required","You don't have permission to view this.",{label:"Back home",onClick:()=>go("/")})); return w; }
   const tab=params.tab||"overview"; const ws=el("div",{class:"workspace"}); const nav=el("div",{class:"ws-nav"});
   nav.innerHTML=`<div class="ws-brand">${icon("shield",22)}<span>Admin</span></div>`+ADMIN_NAV.map(i=>`<div class="sn-item ${i[0]===tab?"active":""}" data-nav="/admin/${i[0]==="overview"?"":i[0]}">${icon(i[1],20)}<span>${i[2]}</span></div>`).join("")+`<div class="sn-sep"></div><div class="sn-item" data-nav="/">${icon("arrowleft",20)}<span>Exit admin</span></div>`;
@@ -1260,9 +1297,24 @@ V.admin=async(params)=>{ if(!Auth.isAdmin()){ const w=el("div",{class:"main-pad"
   try{ await renderAdminTab(tab,c); }catch(e){ c.append(emptyState("warn","Couldn't load",e.message)); }
   return ws; };
 async function renderAdminTab(tab,c){
+  if(tab==="site"){ c.innerHTML=`<h2 style="margin:0 0 16px;font-size:22px">Site &amp; maintenance</h2>`;
+    const m=await API.get("/api/admin/maintenance");
+    const card=el("div",{class:"card",style:"margin-bottom:16px"}); card.innerHTML=`<b>Maintenance mode</b><div style="color:var(--text-dim);font-size:13px;margin:6px 0 4px">When ON, only admins can reach the site — everyone else sees a maintenance screen and can't sign up, upload or comment.</div>`;
+    const row=el("div",{class:"setting-row"}); row.innerHTML=`<div class="st"><div class="t">Maintenance mode</div><div style="color:var(--text-faint);font-size:12.5px" id="mnt-state">Currently ${m.maintenance?"<b style='color:var(--danger)'>ON</b>":"off"}</div></div>`;
+    row.append(toggleCtl(()=>m.maintenance, async v=>{ try{ const r=await API.patch("/api/admin/maintenance",{on:v}); m.maintenance=r.maintenance; const st=card.querySelector("#mnt-state"); if(st)st.innerHTML="Currently "+(r.maintenance?"<b style='color:var(--danger)'>ON</b>":"off"); toast("Maintenance "+(v?"enabled":"disabled")+" · logged",{type:v?"info":"ok"}); await Auth.loadConfig(); }catch(x){ toast(x.message,{type:"err"}); } }));
+    card.append(row);
+    const msg=el("div",{class:"field-group",style:"margin-top:12px"}); msg.innerHTML=`<label>Message shown to visitors</label><textarea class="textarea" id="mnt-msg" placeholder="We'll be right back…">${esc(m.maintenanceMsg||"")}</textarea>`; card.append(msg);
+    card.append(el("button",{class:"btn brand",style:"margin-top:8px",onclick:async()=>{ try{ await API.patch("/api/admin/maintenance",{message:msg.querySelector("#mnt-msg").value}); toast("Message saved",{type:"ok"}); await Auth.loadConfig(); }catch(x){ toast(x.message,{type:"err"}); } }},"Save message"));
+    c.append(card);
+    const q=el("div",{class:"card"}); q.innerHTML=`<b>Quick actions</b>`;
+    q.append(settingRow("Feature flags","Turn uploads, comments, live or sign-ups on/off",el("button",{class:"btn sm",onclick:()=>go("/admin/flags")},"Open")),
+      settingRow("Broadcast announcement","Show a banner to everyone",el("button",{class:"btn sm",onclick:()=>go("/admin/announce")},"Open")),
+      settingRow("Audit log","Review every admin action",el("button",{class:"btn sm",onclick:()=>go("/admin/audit")},"Open")));
+    c.append(q); return; }
   if(tab==="overview"){ const {stats,recentUsers,recentReports}=await API.get("/api/admin/overview");
     c.innerHTML=`<h2 style="margin:0 0 16px;font-size:22px">Platform overview</h2>`;
-    const tiles=el("div",{class:"tiles"}); [["Users",stats.users],["Videos",stats.videos],["BloxClips",stats.clips],["Comments",stats.comments],["Total views",fmtN(stats.views)],["Subscriptions",stats.subscriptions],["Pending reports",stats.reports],["Active sessions",stats.sessions],["Suspended/banned",stats.suspended]].forEach(x=>{const t=el("div",{class:"stat-tile"});t.innerHTML=`<div class="k">${x[0]}</div><div class="v">${typeof x[1]==="number"?fmtN(x[1]):x[1]}</div>`;tiles.append(t);}); c.append(tiles);
+    const tiles=el("div",{class:"tiles"}); [["Users",stats.users],["Videos",stats.videos],["BloxClips",stats.clips],["Live now",stats.live||0],["Comments",stats.comments],["Total views",fmtN(stats.views)],["Subscriptions",stats.subscriptions],["Pending reports",stats.reports],["Active sessions",stats.sessions],["Suspended/banned",stats.suspended],["Media files",stats.mediaFiles||0],["Storage used",((stats.mediaBytes||0)/1048576).toFixed(1)+" MB"]].forEach(x=>{const t=el("div",{class:"stat-tile"});t.innerHTML=`<div class="k">${x[0]}</div><div class="v">${typeof x[1]==="number"?fmtN(x[1]):x[1]}</div>`;tiles.append(t);}); c.append(tiles);
+    if(stats.maintenance){ const w=el("div",{class:"card",style:"margin-top:14px;background:var(--warning);color:#2a2400;display:flex;gap:10px;align-items:center"}); w.innerHTML=`${icon("warn",20)}<div style="flex:1"><b>Maintenance mode is ON</b> — the site is admin-only right now.</div>`; w.append(el("button",{class:"btn sm",onclick:()=>go("/admin/site")},"Manage")); c.append(w); }
     const g=el("div",{style:"display:grid;grid-template-columns:1fr 1fr;gap:16px"});
     const ru=el("div",{class:"card"}); ru.innerHTML=`<b>Newest accounts</b>`; recentUsers.forEach(u=>ru.append(settingRow(esc(u.displayName)+" · @"+esc(u.handle),u.role+" · joined "+ago(u.createdAt),el("button",{class:"btn sm ghost",onclick:()=>go("/admin/users")},"Manage")))); if(!recentUsers.length)ru.append(el("div",{style:"color:var(--text-dim);padding:14px 0"},"No users yet."));
     const rr=el("div",{class:"card"}); rr.innerHTML=`<b>Recent reports</b>`; recentReports.forEach(r=>rr.append(settingRow(esc(r.reason||"Report"),r.targetKind+" · "+r.status,el("span",{class:"pill"},r.status)))); if(!recentReports.length)rr.append(el("div",{style:"color:var(--text-dim);padding:14px 0"},"No reports — all clear ✨"));
@@ -1291,7 +1343,7 @@ async function renderAdminTab(tab,c){
     if(!videos.length){c.append(emptyState("library","No content yet","Uploads appear here."));return;}
     const tbl=el("table",{class:"data"}); tbl.innerHTML=`<thead><tr><th>Video</th><th>Creator</th><th>Kind</th><th>Views</th><th>Status</th><th></th></tr></thead>`; const tb=el("tbody");
     videos.forEach(v=>{const tr=el("tr");tr.innerHTML=`<td><div style="display:flex;gap:10px;align-items:center"><img src="${vidPoster(v)}" style="width:70px;aspect-ratio:16/9;border-radius:6px;object-fit:cover"><div style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">${esc(v.title)}</div></div></td><td>${esc((v.owner||{}).displayName||"?")}</td><td>${v.kind}</td><td>${fmtN(v.views)}</td><td>${v.status==="removed"?'<span class="pill" style="background:var(--danger);color:#fff">removed</span>':'<span class="pill ok">'+v.status+'</span>'}</td><td><button class="icon-btn" data-m>${icon("morev",18)}</button></td>`;
-      tr.querySelector("[data-m]").onclick=e=>openMenu(e.currentTarget,[{icon:"eye",label:"View",onClick:()=>go((v.kind==="clip"?"/clip/":"/watch/")+v.id)},{icon:"warn",label:v.status==="removed"?"Restore":"Hide (removed)",onClick:async()=>{try{await API.patch("/api/admin/videos/"+v.id,{status:v.status==="removed"?"published":"removed"});toast("Updated · logged");App.route();}catch(x){toast(x.message,{type:"err"});}}},"sep",{icon:"trash",label:"Delete permanently",danger:true,onClick:()=>confirmModal("Delete content?","Permanently removes “"+v.title+"”.",async()=>{await API.del("/api/admin/videos/"+v.id);tr.remove();toast("Deleted · logged");},{danger:true,yes:"Delete"})}]); tb.append(tr);}); tbl.append(tb); c.append(tbl); return; }
+      tr.querySelector("[data-m]").onclick=e=>openMenu(e.currentTarget,[{icon:"eye",label:"View",onClick:()=>go((v.kind==="clip"?"/clip/":"/watch/")+v.id)},...(v.kind==="live"?[{icon:"block",label:"End livestream",onClick:async()=>{try{await API.post("/api/videos/"+v.id+"/end-live");toast("Stream ended · logged");App.route();}catch(x){toast(x.message,{type:"err"});}}}]:[]),{icon:"warn",label:v.status==="removed"?"Restore":"Hide (removed)",onClick:async()=>{try{await API.patch("/api/admin/videos/"+v.id,{status:v.status==="removed"?"published":"removed"});toast("Updated · logged");App.route();}catch(x){toast(x.message,{type:"err"});}}},"sep",{icon:"trash",label:"Delete permanently",danger:true,onClick:()=>confirmModal("Delete content?","Permanently removes “"+v.title+"”.",async()=>{await API.del("/api/admin/videos/"+v.id);tr.remove();toast("Deleted · logged");},{danger:true,yes:"Delete"})}]); tb.append(tr);}); tbl.append(tb); c.append(tbl); return; }
   if(tab==="reports"){ c.innerHTML=`<h2 style="margin:0 0 8px;font-size:22px">Reports queue</h2><p style="color:var(--text-dim);margin:0 0 16px">Automated and user reports. Every action is logged to the audit trail.</p>`;
     const {reports}=await API.get("/api/admin/reports"); if(!reports.length){c.append(emptyState("check","No reports","Nothing needs review right now ✨"));return;}
     reports.forEach(r=>{const card=el("div",{class:"card",style:"display:flex;gap:12px;align-items:center;margin-bottom:10px"});card.innerHTML=`<div style="width:40px;height:40px;border-radius:10px;background:var(--warning);color:#2a2400;display:grid;place-items:center">${icon("flag",20)}</div><div style="flex:1"><b>${esc(r.reason||"Report")}</b><div style="color:var(--text-dim);font-size:13px">${r.targetKind} · ${esc((r.reporter||{}).displayName||"user")} · ${ago(r.createdAt)}${r.details?" · “"+esc(r.details.slice(0,60))+"”":""}</div></div><span class="pill">${r.status}</span>`;
@@ -1313,10 +1365,24 @@ async function renderAdminTab(tab,c){
 async function adminUser(id,patch,tr,reload,inp){ try{ await API.patch("/api/admin/users/"+id,patch); toast("Updated · logged",{type:"ok"}); reload&&reload(inp?inp.value:""); }catch(e){ toast(e.message,{type:"err"}); } }
 
 //__APPEND_HERE__
+function renderMaintenance(){ const root=$("#app"); if(!root)return; root.setAttribute("aria-busy","false");
+  const msg=(Auth.config&&Auth.config.maintenanceMsg)||"BloxTube is down for maintenance. We'll be back very soon.";
+  root.innerHTML=`<div style="min-height:100vh;display:grid;place-items:center;padding:24px;text-align:center">
+    <div class="card" style="max-width:460px;padding:44px 30px">
+      <div style="width:78px;height:78px;margin:0 auto 14px;border-radius:22px;background:var(--glass-2);display:grid;place-items:center">${icon("settings",42)}</div>
+      <h1 style="margin:0 0 10px;font-size:27px">Down for maintenance</h1>
+      <p style="color:var(--text-dim);margin:0 0 22px;line-height:1.6">${esc(msg)}</p>
+      <button class="btn brand" onclick="location.reload()">${icon("refresh",16)} Try again</button>
+      <div style="margin-top:18px;color:var(--text-faint);font-size:12.5px">Admins can still <span data-nav="__signin" style="text-decoration:underline;cursor:pointer" id="mnt-signin">sign in</span>.</div>
+    </div></div>`;
+  const si=root.querySelector("#mnt-signin"); if(si)si.onclick=()=>{ renderAuth(); };
+}
 
 /* ================================================================== boot ================================================================== */
 window.addEventListener("error",e=>console.warn("[bloxtube]",e.message));
-(async function boot(){ await Auth.loadConfig(); await Auth.load(); if(Auth.user)App.start(); else renderAuth(); })();
+(async function boot(){ await Auth.loadConfig(); await Auth.load();
+  if(Auth.config&&Auth.config.maintenance&&!Auth.isAdmin()){ renderMaintenance(); return; }
+  if(Auth.user)App.start(); else renderAuth(); })();
 </script>
 </body>
 </html>
