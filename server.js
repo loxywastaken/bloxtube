@@ -14,7 +14,22 @@ const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
+const MEDIA_DIR = path.join(DATA_DIR, 'media');
 const INDEX_FILE = path.join(ROOT, 'index.html');
+function ensureMediaDir(){ try{ if(!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR,{recursive:true}); }catch(e){} }
+
+/* uploaded media: allowed types + extensions */
+const MEDIA_TYPES = {
+  'video/mp4':'mp4','video/webm':'webm','video/ogg':'ogv','video/quicktime':'mov','video/x-matroska':'mkv',
+  'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif','image/avif':'avif',
+  'audio/mpeg':'mp3','audio/mp4':'m4a','audio/ogg':'oga','audio/wav':'wav','audio/webm':'weba'
+};
+const EXT_TYPES = { mp4:'video/mp4',webm:'video/webm',ogv:'video/ogg',mov:'video/quicktime',mkv:'video/x-matroska',
+  jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',gif:'image/gif',avif:'image/avif',
+  mp3:'audio/mpeg',m4a:'audio/mp4',oga:'audio/ogg',wav:'audio/wav',weba:'audio/webm' };
+const MAX_UPLOAD = { video:200*1024*1024, audio:60*1024*1024, image:12*1024*1024 };
+function mediaKind(mime){ if(mime.startsWith('video/'))return 'video'; if(mime.startsWith('image/'))return 'image'; if(mime.startsWith('audio/'))return 'audio'; return null; }
+function unlinkMedia(url){ if(typeof url==='string'&&/^\/media\/[A-Za-z0-9_\-]+\.[a-z0-9]+$/.test(url)){ try{ fs.unlinkSync(path.join(MEDIA_DIR,path.basename(url))); }catch(e){} } }
 
 /* ---------- data store ---------- */
 const EMPTY_DB = () => ({
@@ -54,6 +69,14 @@ function verifyPw(pw, salt, hash){ try{ const a=Buffer.from(hashPw(pw,salt),'hex
 function newToken(){ return crypto.randomBytes(32).toString('hex'); }
 const HANDLE_RE = /^[a-zA-Z0-9_]{3,20}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Accept only our own uploaded media paths or https:// URLs (never javascript:, data:, etc.)
+function safeMediaUrl(s){ s=String(s||'').trim(); if(!s)return ''; if(/^\/media\/[A-Za-z0-9_\-]+\.[a-z0-9]+$/.test(s))return s; if(/^https:\/\/[^\s'"<>]+$/i.test(s)&&s.length<=500)return s; return ''; }
+const VERIFY_TIERS = ['official','artist','identity','business'];
+// Parse a YouTube/Vimeo URL into an embeddable descriptor.
+function parseEmbed(url){ url=String(url||'').trim(); let m;
+  if(m=url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([A-Za-z0-9_\-]{6,20})/)) return {provider:'youtube',id:m[1]};
+  if(m=url.match(/vimeo\.com\/(?:video\/)?(\d{5,12})/)) return {provider:'vimeo',id:m[1]};
+  return null; }
 
 class HttpError extends Error{ constructor(status,msg){ super(msg); this.status=status; } }
 const bad = (m)=>{ throw new HttpError(400,m); };
@@ -61,19 +84,20 @@ const need = (v,m)=>{ if(v==null||v==='') bad(m); return v; };
 
 /* ---------- serialization (never leak secrets) ---------- */
 function pubUser(u){ if(!u)return null; const subs=DB.subscriptions.filter(s=>s.channelId===u.id).length; const vids=DB.videos.filter(v=>v.ownerId===u.id&&v.status==='published').length;
-  return { id:u.id, handle:u.handle, displayName:u.displayName, avatarSeed:u.avatarSeed, bannerSeed:u.bannerSeed, bio:u.bio||'', role:u.role, verified:u.verified||null, status:u.status, createdAt:u.createdAt, location:u.location||'', pronouns:u.pronouns||'', links:u.links||[], subscribers:subs, videoCount:vids, plus:!!u.plus }; }
+  return { id:u.id, handle:u.handle, displayName:u.displayName, avatarSeed:u.avatarSeed, bannerSeed:u.bannerSeed, avatarUrl:u.avatarUrl||'', bannerUrl:u.bannerUrl||'', bio:u.bio||'', role:u.role, verified:u.verified||null, status:u.status, createdAt:u.createdAt, location:u.location||'', pronouns:u.pronouns||'', links:u.links||[], subscribers:subs, videoCount:vids, plus:!!u.plus }; }
 function meUser(u){ return Object.assign(pubUser(u), { email:u.email, coins:u.coins||0 }); }
 function pubVideo(v){ const owner=DB.users.find(x=>x.id===v.ownerId);
-  return { id:v.id, ownerId:v.ownerId, owner:owner?{id:owner.id,handle:owner.handle,displayName:owner.displayName,avatarSeed:owner.avatarSeed,verified:owner.verified||null}:null,
+  return { id:v.id, ownerId:v.ownerId, owner:owner?{id:owner.id,handle:owner.handle,displayName:owner.displayName,avatarSeed:owner.avatarSeed,avatarUrl:owner.avatarUrl||'',verified:owner.verified||null}:null,
     title:v.title, desc:v.desc||'', kind:v.kind, dur:v.dur||0, createdAt:v.createdAt, visibility:v.visibility, category:v.category||'',
-    tags:v.tags||[], hashtags:v.hashtags||[], thumbSeed:v.thumbSeed, views:v.views||0, status:v.status, captions:!!v.captions,
+    tags:v.tags||[], hashtags:v.hashtags||[], thumbSeed:v.thumbSeed, poster:v.poster||'', views:v.views||0, status:v.status, captions:!!v.captions,
+    src:v.src||'', srcType:v.srcType||'', embed:v.embed||null,
     resolution:v.resolution||'1080p', likes:DB.likes.filter(l=>l.targetId===v.id&&l.type==='like').length,
     dislikes:DB.likes.filter(l=>l.targetId===v.id&&l.type==='dislike').length,
     commentCount:DB.comments.filter(c=>c.videoId===v.id).length,
     chapters:v.chapters||[], isLive:v.kind==='live', allowRemix:v.allowRemix!==false, allowComments:v.allowComments!==false }; }
 function pubComment(c){ const u=DB.users.find(x=>x.id===c.userId);
   return { id:c.id, videoId:c.videoId, text:c.text, createdAt:c.createdAt, parentId:c.parentId||null, pinned:!!c.pinned, hearted:!!c.hearted, edited:!!c.edited,
-    likes:c.likes||0, author:u?{id:u.id,handle:u.handle,displayName:u.displayName,avatarSeed:u.avatarSeed,verified:u.verified||null,role:u.role}:null }; }
+    likes:c.likes||0, author:u?{id:u.id,handle:u.handle,displayName:u.displayName,avatarSeed:u.avatarSeed,avatarUrl:u.avatarUrl||'',verified:u.verified||null,role:u.role}:null }; }
 
 /* ---------- notifications ---------- */
 function notify(userId, type, text, link){ if(!userId)return; DB.notifications.unshift({ id:uid('n_'), userId, type, text, link:link||'', read:false, createdAt:now() }); if(DB.notifications.length>5000)DB.notifications.length=5000; }
@@ -143,6 +167,8 @@ route('PATCH','/api/me',(ctx)=>{ const u=requireUser(ctx); const b=ctx.body||{};
   if(b.bio!=null)u.bio=String(b.bio).slice(0,500);
   if(b.location!=null)u.location=String(b.location).slice(0,60);
   if(b.pronouns!=null)u.pronouns=String(b.pronouns).slice(0,30);
+  if(b.avatarUrl!=null)u.avatarUrl=safeMediaUrl(b.avatarUrl);
+  if(b.bannerUrl!=null)u.bannerUrl=safeMediaUrl(b.bannerUrl);
   if(Array.isArray(b.links))u.links=b.links.slice(0,5).map(l=>({t:String(l.t||'').slice(0,30),u:String(l.u||'').slice(0,200)}));
   saveDB(); return {user:meUser(u)}; });
 route('GET','/api/channels/:id',(ctx)=>{ const u=DB.users.find(x=>x.id===ctx.params.id||x.handle.toLowerCase()===ctx.params.id.toLowerCase()); if(!u)throw new HttpError(404,'Channel not found.');
@@ -172,11 +198,16 @@ route('GET','/api/videos/:id',(ctx)=>{ const v=DB.videos.find(x=>x.id===ctx.para
   return { video:pubVideo(v), liked, saved, related:rel, progress:(ctx.user&&(DB.progress[ctx.user.id]||{})[v.id])||null }; });
 route('POST','/api/videos',(ctx)=>{ const u=requireUser(ctx); if(DB.flags.uploads===false)throw new HttpError(403,'Uploads are temporarily disabled.'); const b=ctx.body||{};
   need(b.title,'A title is required.');
+  // resolve the real video source: uploaded file, direct URL, or a YouTube/Vimeo embed
+  let src='', srcType='', embed=null;
+  if(b.embedUrl){ embed=parseEmbed(b.embedUrl); if(embed){ srcType='embed'; } else { const su=safeMediaUrl(b.embedUrl); if(su){ src=su; srcType='url'; } } }
+  if(!srcType && b.src){ const su=safeMediaUrl(b.src); if(su){ src=su; srcType=(su.indexOf('/media/')===0?'file':'url'); } }
   const v={ id:uid('v_'), ownerId:u.id, title:String(b.title).slice(0,140), desc:String(b.desc||'').slice(0,5000),
     kind:['video','clip','live','podcast'].includes(b.kind)?b.kind:'video', dur:Math.max(0,Math.min(+b.dur||0,86400)),
     createdAt:now(), visibility:['public','unlisted','private'].includes(b.visibility)?b.visibility:'public',
     category:String(b.category||'Gaming').slice(0,30), tags:(b.tags||[]).slice(0,20).map(t=>String(t).slice(0,30)),
-    hashtags:(b.hashtags||[]).slice(0,10), thumbSeed:b.thumbSeed||uid('t_'), views:0, status:'published',
+    hashtags:(b.hashtags||[]).slice(0,10), thumbSeed:b.thumbSeed||uid('t_'), poster:safeMediaUrl(b.poster), views:0, status:'published',
+    src, srcType, embed,
     captions:!!b.captions, resolution:b.resolution||'1080p', chapters:Array.isArray(b.chapters)?b.chapters.slice(0,30):[],
     allowRemix:b.allowRemix!==false, allowComments:b.allowComments!==false };
   DB.videos.unshift(v);
@@ -186,7 +217,7 @@ route('POST','/api/videos',(ctx)=>{ const u=requireUser(ctx); if(DB.flags.upload
 route('PATCH','/api/videos/:id',(ctx)=>{ const u=requireUser(ctx); const v=DB.videos.find(x=>x.id===ctx.params.id); if(!v)throw new HttpError(404,'Not found.'); if(v.ownerId!==u.id&&u.role==='user')throw new HttpError(403,'Not your video.');
   const b=ctx.body||{}; ['title','desc','category','visibility'].forEach(k=>{ if(b[k]!=null)v[k]=String(b[k]).slice(0,5000); }); if(b.tags)v.tags=b.tags.slice(0,20); saveDB(); return {video:pubVideo(v)}; });
 route('DELETE','/api/videos/:id',(ctx)=>{ const u=requireUser(ctx); const v=DB.videos.find(x=>x.id===ctx.params.id); if(!v)throw new HttpError(404,'Not found.'); if(v.ownerId!==u.id&&u.role==='user')throw new HttpError(403,'Not your video.');
-  DB.videos=DB.videos.filter(x=>x!==v); DB.comments=DB.comments.filter(c=>c.videoId!==v.id); DB.playlists.forEach(p=>p.items=p.items.filter(i=>i!==v.id)); saveDB(); return {ok:true}; });
+  unlinkMedia(v.src); unlinkMedia(v.poster); DB.videos=DB.videos.filter(x=>x!==v); DB.comments=DB.comments.filter(c=>c.videoId!==v.id); DB.playlists.forEach(p=>p.items=p.items.filter(i=>i!==v.id)); saveDB(); return {ok:true}; });
 route('POST','/api/videos/:id/view',(ctx)=>{ const v=DB.videos.find(x=>x.id===ctx.params.id); if(!v)throw new HttpError(404,'Not found.'); v.views=(v.views||0)+1;
   if(ctx.user){ const h=DB.history[ctx.user.id]=DB.history[ctx.user.id]||[]; const i=h.indexOf(v.id); if(i>=0)h.splice(i,1); h.unshift(v.id); if(h.length>500)h.length=500; } saveDB(); return {views:v.views}; });
 route('POST','/api/videos/:id/like',(ctx)=>{ const u=requireUser(ctx); const v=DB.videos.find(x=>x.id===ctx.params.id); if(!v)throw new HttpError(404,'Not found.'); const type=ctx.body.type==='dislike'?'dislike':'like';
@@ -241,7 +272,7 @@ route('PATCH','/api/admin/users/:id',(ctx)=>{ const admin=requireAdmin(ctx); con
   if(u.role==='owner'&&admin.role!=='owner')throw new HttpError(403,'Only the owner can modify the owner.');
   if(b.role&&['user','admin','owner'].includes(b.role)){ if(b.role==='owner'&&admin.role!=='owner')throw new HttpError(403,'Only an owner can grant ownership.'); u.role=b.role; audit(admin.id,'set role '+b.role,u.handle); }
   if(b.status&&['active','suspended','banned'].includes(b.status)){ u.status=b.status; if(b.status!=='active')DB.sessions=DB.sessions.filter(s=>s.userId!==u.id); audit(admin.id,'set status '+b.status,u.handle); }
-  if(b.verified!==undefined){ u.verified=b.verified||null; audit(admin.id,'verified '+(b.verified||'none'),u.handle); }
+  if(b.verified!==undefined){ u.verified=VERIFY_TIERS.includes(b.verified)?b.verified:null; audit(admin.id,'verified '+(u.verified||'none'),u.handle); }
   saveDB(); return {user:Object.assign(pubUser(u),{email:u.email})}; });
 route('DELETE','/api/admin/users/:id',(ctx)=>{ const admin=requireAdmin(ctx); const u=DB.users.find(x=>x.id===ctx.params.id); if(!u)throw new HttpError(404,'Not found.'); if(u.role==='owner')throw new HttpError(403,'The owner account cannot be deleted.');
   DB.users=DB.users.filter(x=>x!==u); DB.videos=DB.videos.filter(v=>v.ownerId!==u.id); DB.sessions=DB.sessions.filter(s=>s.userId!==u.id); DB.comments=DB.comments.filter(c=>c.userId!==u.id); audit(admin.id,'deleted account',u.handle); saveDB(); return {ok:true}; });
@@ -266,16 +297,64 @@ route('POST','/api/me/plus',(ctx)=>{ const u=requireUser(ctx); u.plus=!!(ctx.bod
 function readBody(req){ return new Promise((resolve)=>{ let data=''; let tooBig=false; req.on('data',c=>{ data+=c; if(data.length>2e6){tooBig=true;req.destroy();} }); req.on('end',()=>{ if(tooBig)return resolve({}); if(!data)return resolve({}); try{ resolve(JSON.parse(data)); }catch(e){ resolve({}); } }); req.on('error',()=>resolve({})); }); }
 function send(res,status,obj){ const body=JSON.stringify(obj); res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}); res.end(body); }
 const SECURITY_HEADERS={ 'X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Referrer-Policy':'strict-origin-when-cross-origin',
-  'Content-Security-Policy':"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; media-src 'self' data:; font-src 'self' data:; base-uri 'self'; form-action 'self'" };
+  'Content-Security-Policy':"default-src 'self'; img-src 'self' data: https: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' blob:; media-src 'self' https: blob: data:; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com; font-src 'self' data:; base-uri 'self'; form-action 'self'" };
 
 let INDEX_HTML=null;
 function serveIndex(res){ try{ if(INDEX_HTML===null)INDEX_HTML=fs.readFileSync(INDEX_FILE); res.writeHead(200,Object.assign({'Content-Type':'text/html; charset=utf-8'},SECURITY_HEADERS)); res.end(INDEX_HTML); }catch(e){ res.writeHead(500); res.end('index.html not found next to server.js'); } }
 
+/* ---------- media upload (binary, streamed straight to the volume) ---------- */
+function handleUpload(req,res){
+  const user=userFrom(req);
+  if(!user) return send(res,401,{error:'Please sign in to upload.'});
+  if(user.status==='banned') return send(res,403,{error:'This account is banned.'});
+  const u=new URL(req.url,'http://x');
+  const declared=(u.searchParams.get('type')||req.headers['content-type']||'').split(';')[0].trim().toLowerCase();
+  let ext=MEDIA_TYPES[declared];
+  if(!ext){ const fn=(u.searchParams.get('name')||'').toLowerCase(); const m=fn.match(/\.([a-z0-9]+)$/); if(m&&EXT_TYPES[m[1]])ext=m[1]; }
+  if(!ext) return send(res,415,{error:'Unsupported file type — use a common video, image or audio format.'});
+  const mime=EXT_TYPES[ext]||declared; const kind=mediaKind(mime);
+  if(!kind) return send(res,415,{error:'Unsupported file type.'});
+  const cap=MAX_UPLOAD[kind]||MAX_UPLOAD.image;
+  ensureMediaDir();
+  const fname=uid('')+'.'+ext; const fpath=path.join(MEDIA_DIR,fname);
+  const ws=fs.createWriteStream(fpath); let size=0, done=false;
+  const fail=(status,msg)=>{ if(done)return; done=true; try{ws.destroy();}catch(e){} try{fs.unlinkSync(fpath);}catch(e){} try{req.destroy();}catch(e){} try{send(res,status,{error:msg});}catch(e){} };
+  req.on('data',c=>{ size+=c.length; if(size>cap) fail(413,'File too large (max '+Math.round(cap/1048576)+'MB for '+kind+').'); });
+  req.on('error',()=>fail(400,'Upload interrupted.'));
+  ws.on('error',()=>fail(500,'Could not save the file.'));
+  ws.on('finish',()=>{ if(done)return; done=true; if(size===0){ try{fs.unlinkSync(fpath);}catch(e){} return send(res,400,{error:'The file was empty.'}); }
+    send(res,200,{ src:'/media/'+fname, kind, mime, bytes:size }); });
+  req.pipe(ws);
+}
+/* ---------- media streaming (HTTP Range for seeking) ---------- */
+function serveMedia(req,res,pathname){
+  const name=path.basename(pathname);
+  if(!/^[A-Za-z0-9_\-]+\.[a-z0-9]+$/.test(name)){ res.writeHead(404); return res.end('Not found'); }
+  const fpath=path.join(MEDIA_DIR,name);
+  if(!fpath.startsWith(MEDIA_DIR+path.sep)){ res.writeHead(404); return res.end('Not found'); }
+  let stat; try{ stat=fs.statSync(fpath); if(!stat.isFile())throw 0; }catch(e){ res.writeHead(404); return res.end('Not found'); }
+  const ext=(name.split('.').pop()||'').toLowerCase(); const type=EXT_TYPES[ext]||'application/octet-stream';
+  const base={ 'Content-Type':type, 'Accept-Ranges':'bytes', 'Cache-Control':'public, max-age=31536000, immutable' };
+  const range=req.headers.range;
+  if(range){ const m=range.match(/bytes=(\d*)-(\d*)/); let start=m&&m[1]!==''?parseInt(m[1]):0; let end=m&&m[2]!==''?parseInt(m[2]):stat.size-1;
+    if(isNaN(start)||isNaN(end)||start>end||end>=stat.size){ res.writeHead(416,{'Content-Range':'bytes */'+stat.size}); return res.end(); }
+    res.writeHead(206,Object.assign({},base,{ 'Content-Range':`bytes ${start}-${end}/${stat.size}`, 'Content-Length':end-start+1 }));
+    if(req.method==='HEAD')return res.end();
+    return fs.createReadStream(fpath,{start,end}).pipe(res); }
+  res.writeHead(200,Object.assign({},base,{ 'Content-Length':stat.size }));
+  if(req.method==='HEAD')return res.end();
+  fs.createReadStream(fpath).pipe(res);
+}
+
 const server=http.createServer(async (req,res)=>{
   for(const k in SECURITY_HEADERS)res.setHeader(k,SECURITY_HEADERS[k]);
   const u=new URL(req.url,'http://x'); const pathname=decodeURIComponent(u.pathname);
+  // uploaded media (binary, streamed)
+  if(pathname.startsWith('/media/')){ if(req.method!=='GET'&&req.method!=='HEAD'){ res.writeHead(405); return res.end('Method not allowed'); } return serveMedia(req,res,pathname); }
   // API
   if(pathname.startsWith('/api/')){
+    // binary upload is handled specially (streamed to disk, not parsed as JSON)
+    if(pathname==='/api/upload'){ if(req.method!=='POST'){ return send(res,405,{error:'Use POST to upload.'}); } return handleUpload(req,res); }
     try{
       const match=routes.find(r=>r.method===req.method&&r.rx.test(pathname));
       if(!match) return send(res,404,{error:'Unknown endpoint.'});
@@ -295,4 +374,4 @@ const server=http.createServer(async (req,res)=>{
 
 process.on('SIGINT',()=>{ flushDB(); process.exit(0); });
 process.on('SIGTERM',()=>{ flushDB(); process.exit(0); });
-(async()=>{ await loadDB(); server.listen(PORT,()=>{ console.log(`\n  🎬  BloxTube backend running →  http://localhost:${PORT}`); console.log(`      ${DB.users.length} account(s) · ${DB.videos.length} video(s)`); if(DB.users.length===0)console.log(`      First account you create becomes the OWNER (full admin).\n`); }); })();
+(async()=>{ await loadDB(); ensureMediaDir(); server.listen(PORT,()=>{ console.log(`\n  🎬  BloxTube backend running →  http://localhost:${PORT}`); console.log(`      ${DB.users.length} account(s) · ${DB.videos.length} video(s)`); if(DB.users.length===0)console.log(`      First account you create becomes the OWNER (full admin).\n`); }); })();

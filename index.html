@@ -478,6 +478,13 @@ function avatarURI(seed,label){ const r=mulberry32(seedFrom((seed||"x")+"av")); 
 function bannerURI(seed){ const r=mulberry32(seedFrom((seed||"x")+"bn")); const h1=Math.floor(r()*360),h2=(h1+90+Math.floor(r()*120))%360; let sh="";
   for(let i=0;i<10;i++){const x=r()*1600,y=r()*300,s=30+r()*120,rot=r()*90;sh+=`<rect x='${x.toFixed(0)}' y='${y.toFixed(0)}' width='${s.toFixed(0)}' height='${s.toFixed(0)}' rx='${(s*.15).toFixed(0)}' transform='rotate(${rot.toFixed(0)} ${x.toFixed(0)} ${y.toFixed(0)})' fill='hsl(${h2} 85% 62%)' opacity='.16'/>`;}
   return svgUri(`<svg xmlns='http://www.w3.org/2000/svg' width='1600' height='300'><defs><linearGradient id='b' x1='0' y1='0' x2='1' y2='0'><stop offset='0' stop-color='hsl(${h1} 65% 32%)'/><stop offset='1' stop-color='hsl(${h2} 68% 22%)'/></linearGradient></defs><rect width='1600' height='300' fill='url(#b)'/>${sh}</svg>`); }
+/* ---- real-media resolvers: use an uploaded image when present, else the procedural art ---- */
+function realImg(u){ return typeof u==="string" && (u.charAt(0)==="/"||/^(https?:|blob:|data:)/.test(u)); }
+function avaSrc(u){ u=u||{}; return realImg(u.avatarUrl)?u.avatarUrl:avatarURI(u.avatarSeed,u.displayName); }
+function banSrc(u){ u=u||{}; return realImg(u.bannerUrl)?u.bannerUrl:bannerURI(u.bannerSeed); }
+function vidPoster(v,opts){ v=v||{}; return realImg(v.poster)?v.poster:thumbURI(v.thumbSeed,opts); }
+function pickImage(accept,onFile){ const i=document.createElement("input"); i.type="file"; i.accept=accept||"image/*"; i.style.display="none"; i.onchange=e=>{ const f=e.target.files&&e.target.files[0]; if(f)onFile(f); i.remove(); }; document.body.appendChild(i); i.click(); }
+async function uploadImage(file){ if(file.size>12*1024*1024)throw new Error("Image must be under 12 MB."); const r=await API.upload(file); return r.src; }
 
 /* ---------- icons ---------- */
 const IP={
@@ -571,7 +578,20 @@ const API={ token:localStorage.getItem("bloxtube:token")||null,
     let r; try{ r=await fetch(path,{method,headers:h,body:body?JSON.stringify(body):undefined}); }catch(e){ throw new Error("Can't reach the server — is it running?"); }
     let d={}; try{ d=await r.json(); }catch(e){}
     if(!r.ok){ const err=new Error(d.error||("Error "+r.status)); err.status=r.status; throw err; } return d; },
-  get(p){return this.req("GET",p);}, post(p,b){return this.req("POST",p,b);}, patch(p,b){return this.req("PATCH",p,b);}, del(p){return this.req("DELETE",p);} };
+  get(p){return this.req("GET",p);}, post(p,b){return this.req("POST",p,b);}, patch(p,b){return this.req("PATCH",p,b);}, del(p){return this.req("DELETE",p);},
+  upload(file,onProgress){ return new Promise((resolve,reject)=>{ const xhr=new XMLHttpRequest();
+    xhr.open("POST","/api/upload?type="+encodeURIComponent(file.type||"")+"&name="+encodeURIComponent(file.name||"file"));
+    if(this.token)xhr.setRequestHeader("Authorization","Bearer "+this.token);
+    xhr.upload.onprogress=e=>{ if(onProgress&&e.lengthComputable)onProgress(e.loaded/e.total); };
+    xhr.onload=()=>{ let d={}; try{d=JSON.parse(xhr.responseText);}catch(e){} if(xhr.status>=200&&xhr.status<300)resolve(d); else reject(new Error(d.error||("Upload failed ("+xhr.status+")"))); };
+    xhr.onerror=()=>reject(new Error("Upload failed — check your connection.")); xhr.send(file); }); } };
+/* ---- media helpers: pick a frame from a video as a poster, read its duration ---- */
+function readVideoMeta(file){ return new Promise((resolve)=>{ try{ const url=URL.createObjectURL(file); const vid=document.createElement("video"); vid.preload="metadata"; vid.muted=true; vid.src=url;
+  vid.onloadedmetadata=()=>{ const dur=Math.round(vid.duration)||0; const w=vid.videoWidth,h=vid.videoHeight; // seek a little in to grab a representative frame
+    const grab=()=>{ try{ const cv=document.createElement("canvas"); const scale=Math.min(1,640/(w||640)); cv.width=Math.max(2,Math.round((w||640)*scale)); cv.height=Math.max(2,Math.round((h||360)*scale)); cv.getContext("2d").drawImage(vid,0,0,cv.width,cv.height); cv.toBlob(b=>{ URL.revokeObjectURL(url); resolve({dur,w,h,poster:b}); },"image/jpeg",0.82); }catch(e){ URL.revokeObjectURL(url); resolve({dur,w,h,poster:null}); } };
+    vid.onseeked=grab; try{ vid.currentTime=Math.min(dur>3?1.5:0.1,(dur||1)*0.25); }catch(e){ grab(); } };
+  vid.onerror=()=>{ URL.revokeObjectURL(url); resolve({dur:0,w:0,h:0,poster:null}); };
+ }catch(e){ resolve({dur:0,w:0,h:0,poster:null}); } }); }
 
 /* ---------- Auth ---------- */
 const Auth={ user:null, config:null,
@@ -625,7 +645,8 @@ function confirmModal(title,msg,onYes,{danger,yes="Confirm"}={}){ openModal(`<p 
 
 /* ---------- helpers used by views ---------- */
 const LOGO=`<svg class="logo" viewBox="0 0 32 32" fill="none"><defs><linearGradient id="lgg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff6b8a"/><stop offset="1" stop-color="#c9268f"/></linearGradient></defs><rect x="1" y="4" width="30" height="24" rx="9" fill="url(#lgg)"/><rect x="1" y="4" width="30" height="11" rx="9" fill="#fff" opacity=".18"/><path d="M13 11.2v9.6l8-4.8z" fill="#fff"/></svg>`;
-function vbadge(u){ return u&&(u.verified==="official"||u.verified==="artist"||u.verified==="identity")?icon("verified",13,"verified"):""; }
+const VTIER={ official:{t:"Verified",c:"#3ea6ff"}, artist:{t:"Official Artist",c:"#ff5c8a"}, identity:{t:"Verified",c:"#9aa0aa"}, business:{t:"Verified business",c:"#ffcf3f"} };
+function vbadge(u){ if(!u||!u.verified||!VTIER[u.verified])return ""; const t=VTIER[u.verified]; return `<span class="vchk" title="${t.t}" style="display:inline-flex;vertical-align:-2px;color:${t.c}">${icon("verified",13,"")}</span>`; }
 function emptyState(ic,title,sub,btn){ const d=el("div",{class:"empty"}); d.innerHTML=`<div class="ec">${icon(ic,44)}</div><h3>${esc(title)}</h3><p>${esc(sub||"")}</p>`; if(btn){const b=el("button",{class:"btn brand big",style:"margin-top:16px",onclick:btn.onClick},btn.label);d.append(b);} return d; }
 function pageHead(title,sub,ic){ const h=el("div",{style:"margin-bottom:20px"}); h.innerHTML=`<h1 style="margin:0;font-size:26px;font-weight:800;letter-spacing:-.02em;display:flex;align-items:center;gap:10px">${ic?icon(ic,26):""}${esc(title)}</h1>${sub?`<p style="color:var(--text-dim);margin:6px 0 0">${esc(sub)}</p>`:""}`; return h; }
 function chipBar(chips,active,onPick){ const bar=el("div",{class:"chipbar"}); chips.forEach(c=>{const b=el("button",{class:"chip"+(c===active?" active":"")},c);b.onclick=()=>onPick(c);bar.append(b);}); return bar; }
@@ -690,7 +711,7 @@ const App={ main:null,side:null,subsCache:null,reqId:0,
       <div class="tb-center"><div class="search"><div class="field"><input id="search-input" placeholder="Search BloxTube" aria-label="Search" autocomplete="off"><button class="go" id="search-go" aria-label="Search">${icon("search",20)}</button></div><button class="mic" id="btn-mic" aria-label="Voice search">${icon("mic",20)}</button><div class="search-suggest" id="search-suggest"></div></div></div>
       <div class="tb-right"><button class="btn" id="btn-create"><span>${icon("createvid",20)}</span><span class="hide-sm" style="margin-left:2px">Create</span></button>
       <button class="icon-btn" id="btn-notif" aria-label="Notifications">${icon("bell")}<span class="badge" id="notif-badge" style="display:none"></span></button>
-      <button class="icon-btn avatar-ring" id="btn-avatar" aria-label="Account" style="padding:0;width:38px;height:38px;overflow:hidden"><img src="${avatarURI(u.avatarSeed,u.displayName)}" style="width:38px;height:38px" alt="You"></button></div>`;
+      <button class="icon-btn avatar-ring" id="btn-avatar" aria-label="Account" style="padding:0;width:38px;height:38px;overflow:hidden"><img src="${avaSrc(u)}" style="width:38px;height:38px" alt="You"></button></div>`;
     bar.querySelector("#btn-menu").onclick=()=>this.toggleSidebar();
     bar.querySelector("#btn-create").onclick=e=>openMenu(e.currentTarget,[{icon:"upload",label:"Upload video",onClick:()=>go("/upload?kind=video")},{icon:"clips",label:"Create a BloxClip",onClick:()=>go("/upload?kind=clip")},{icon:"live",label:"Go live",onClick:()=>go("/upload?kind=live")},{icon:"podcast",label:"New podcast episode",onClick:()=>go("/upload?kind=podcast")}],{align:"left"});
     bar.querySelector("#btn-notif").onclick=()=>go("/notifications");
@@ -722,7 +743,7 @@ const App={ main:null,side:null,subsCache:null,reqId:0,
     const item=(nav,ic,lbl,extra="")=>`<div class="nav-item" data-nav="${nav}" data-route="${nav}" role="link" tabindex="0">${icon(ic)}<span class="lbl">${lbl}</span><span class="nav-mini">${lbl.split(" ")[0]}</span>${extra}</div>`;
     s.innerHTML=`<div class="nav-sec">${item("/","home","Home")}${item("/clips","clips","BloxClips")}${item("/subscriptions","subs","Subscriptions")}${item("/library","library","Library")}</div>
       <div class="nav-sec"><h4>You</h4>${item("/channel/"+u.id,"user","Your channel")}${item("/history","history","History")}${item("/studio","studio","Your videos")}${item("/watchlater","watchlater","Watch later")}${item("/liked","liked","Liked videos")}${item("/downloads","downloads","Downloads")}</div>
-      ${subs.length?`<div class="nav-sec"><h4>Subscriptions</h4>${subs.slice(0,8).map(c=>`<div class="nav-item" data-nav="/channel/${c.id}" role="link" tabindex="0"><img class="ava" src="${avatarURI(c.avatarSeed,c.displayName)}" alt=""><span class="lbl">${esc(c.displayName)}</span></div>`).join("")}</div>`:""}
+      ${subs.length?`<div class="nav-sec"><h4>Subscriptions</h4>${subs.slice(0,8).map(c=>`<div class="nav-item" data-nav="/channel/${c.id}" role="link" tabindex="0"><img class="ava" src="${avaSrc(c)}" alt=""><span class="lbl">${esc(c.displayName)}</span></div>`).join("")}</div>`:""}
       <div class="nav-sec"><h4>Explore</h4>${item("/trending","trending","Trending")}${item("/gaming","gaming","Gaming")}${item("/music","music","Music")}${item("/live","live","Live")}${item("/news","news","News")}${item("/learning","learning","Learning")}</div>
       <div class="nav-sec"><h4>More</h4>${item("/plus","plus","BloxTube Plus")}${item("/settings","settings","Settings")}${Auth.isAdmin()?item("/admin","shield","Admin console"):""}</div>
       <div class="sidebar-foot">BloxTube — a prototype with a real backend.<br>© 2026 · Original content only.</div>`;
@@ -750,15 +771,15 @@ function curSubbed(id){ return (App.subsCache||[]).some(c=>c.id===id); }
 function videoCard(v,opts={}){ const o=v.owner||{displayName:"?",avatarSeed:"?"}; const card=el("div",{class:"vcard",role:"link",tabindex:"0","aria-label":v.title});
   const dur=v.isLive?`<span class="live-badge">${icon("live",12)} LIVE</span>`:`<span class="dur">${fmtDur(v.dur)}</span>`;
   const pills=[]; if(["4K","8K","1440p"].includes(v.resolution))pills.push(`<span class="pill new">${v.resolution}</span>`);
-  card.innerHTML=`<div class="thumb"><img src="${thumbURI(v.thumbSeed,{label:o.displayName})}" alt="" loading="lazy">${pills.length?`<div class="top-pills">${pills.join("")}</div>`:""}${dur}${opts.progress?`<div class="prog"><i style="width:${opts.progress*100}%"></i></div>`:""}</div>
-    <div class="meta">${opts.hideAva?"":`<img class="ava" src="${avatarURI(o.avatarSeed,o.displayName)}" alt="" data-nav="/channel/${o.id}">`}<div class="info"><div class="vtitle">${esc(v.title)}</div><div class="chan" data-nav="/channel/${o.id}">${esc(o.displayName)} ${vbadge(o)}</div><div class="stats">${v.isLive?fmtN(v.views)+" watching":fmtN(v.views)+" views · "+ago(v.createdAt)}</div></div><button class="vmenu" data-act="menu" aria-label="More">${icon("morev",20)}</button></div>`;
+  card.innerHTML=`<div class="thumb"><img src="${vidPoster(v,{label:o.displayName})}" alt="" loading="lazy">${pills.length?`<div class="top-pills">${pills.join("")}</div>`:""}${dur}${opts.progress?`<div class="prog"><i style="width:${opts.progress*100}%"></i></div>`:""}</div>
+    <div class="meta">${opts.hideAva?"":`<img class="ava" src="${avaSrc(o)}" alt="" data-nav="/channel/${o.id}">`}<div class="info"><div class="vtitle">${esc(v.title)}</div><div class="chan" data-nav="/channel/${o.id}">${esc(o.displayName)} ${vbadge(o)}</div><div class="stats">${v.isLive?fmtN(v.views)+" watching":fmtN(v.views)+" views · "+ago(v.createdAt)}</div></div><button class="vmenu" data-act="menu" aria-label="More">${icon("morev",20)}</button></div>`;
   const open=()=>go(v.kind==="clip"?"/clip/"+v.id:(v.isLive?"/watch/":"/watch/")+v.id);
   card.addEventListener("click",e=>{ if(e.target.closest("[data-nav]")){e.stopPropagation();return;} if(e.target.closest("[data-act]"))return; open(); });
   card.addEventListener("keydown",e=>{if(e.key==="Enter")open();});
   card.querySelector('[data-act="menu"]').onclick=e=>{e.stopPropagation();videoMenu(v,e.currentTarget);};
   return card; }
 function clipCard(c){ const o=c.owner||{}; const card=el("div",{class:"clipcard",role:"link",tabindex:"0","aria-label":c.title});
-  card.innerHTML=`<div class="thumb"><img src="${thumbURI(c.thumbSeed,{ratio:'9/16',label:o.displayName})}" alt="" loading="lazy"><div class="cplay">${icon("play",11)} ${fmtN(c.views)}</div><div class="overlay"><div class="ct">${esc(c.title)}</div><div class="cv">${esc(o.displayName)} ${vbadge(o)}</div></div></div>`;
+  card.innerHTML=`<div class="thumb"><img src="${vidPoster(c,{ratio:'9/16',label:o.displayName})}" alt="" loading="lazy"><div class="cplay">${icon("play",11)} ${fmtN(c.views)}</div><div class="overlay"><div class="ct">${esc(c.title)}</div><div class="cv">${esc(o.displayName)} ${vbadge(o)}</div></div></div>`;
   card.onclick=()=>go("/clip/"+c.id); card.onkeydown=e=>{if(e.key==="Enter")card.onclick();}; return card; }
 function rowSection(title,items,renderer,opts={}){ if(!items||!items.length)return null; const sec=el("section",{class:"row-section"});
   const head=el("div",{class:"row-head"}); head.innerHTML=`<h2>${opts.icon?icon(opts.icon,22):""}${esc(title)}</h2>${opts.more?`<span class="more" data-nav="${opts.more}">Show all ${icon("chevright",14)}</span>`:""}`; sec.append(head);
@@ -828,7 +849,7 @@ const saveProgress=debounce((id,t,pct)=>{ API.post("/api/me/progress",{videoId:i
 const Mini={ el:null,timer:null,open(v,cur){ this.close(); const o=v.owner||{}; const m=el("div",{class:"drawer",style:"top:auto;right:20px;bottom:20px;width:380px;height:auto;border-radius:16px;overflow:hidden"});
     m.className="glass"; m.style.cssText="position:fixed;right:20px;bottom:20px;width:380px;border-radius:16px;overflow:hidden;z-index:700";
     m.innerHTML=`<div style="aspect-ratio:16/9;background-size:cover;background-position:center;cursor:pointer;position:relative" data-x="open"><div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:rgba(255,255,255,.3)"><i style="display:block;height:100%;background:var(--brand);width:${(cur/v.dur*100)||0}%"></i></div></div><div style="display:flex;align-items:center;gap:8px;padding:8px"><button class="p-btn sm" data-x="play" style="color:var(--text);width:34px;height:34px">${icon("pause",18)}</button><div style="flex:1;font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.title)}</div><button class="p-btn sm" data-x="close" style="color:var(--text);width:34px;height:34px">${icon("close",18)}</button></div>`;
-    m.querySelector("[data-x=open]").style.backgroundImage=`url("${thumbURI(v.thumbSeed,{label:o.displayName})}")`;
+    m.querySelector("[data-x=open]").style.backgroundImage=`url("${vidPoster(v,{label:o.displayName})}")`;
     document.body.append(m); this.el=m; this.v=v; this.cur=cur||0; this.playing=true; const bar=m.querySelector("i");
     m.querySelector('[data-x="play"]').onclick=e=>{this.playing=!this.playing;e.currentTarget.innerHTML=icon(this.playing?"pause":"play",18);};
     const openW=()=>{const id=this.v.id,c=this.cur;this.close();go("/watch/"+id+"?t="+Math.round(c));};
@@ -838,7 +859,7 @@ const Mini={ el:null,timer:null,open(v,cur){ this.close(); const o=v.owner||{}; 
 const Player={ active:null,st:null,el:null,raf:null,last:0,ctl:null,keyH:null,
   create(v,opts={}){ this.destroy(true); const st=this.st={v,dur:v.isLive?0:v.dur,cur:opts.startAt||0,playing:true,rate:Prefs.get("rate"),volume:Prefs.get("muted")?0:Prefs.get("volume"),muted:Prefs.get("muted"),quality:Prefs.get("quality"),captions:Prefs.get("captions"),theater:false,buffered:.15,seeking:false,ended:false,stats:false,live:!!v.isLive};
     const sh=el("div",{class:"player-shell",tabindex:"0","aria-label":"Video player"}); this.el=sh; this.active=v.id; this.onTheater=opts.onTheater;
-    const thumb=thumbURI(v.thumbSeed,{label:(v.owner||{}).displayName});
+    const thumb=vidPoster(v,{label:(v.owner||{}).displayName});
     sh.innerHTML=`<div class="ambient" style="background-image:url(&quot;${thumb}&quot;)"></div><div class="p-surface" style="background-image:url(&quot;${thumb}&quot;)"></div>
       <div class="stats-nerds" hidden style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,.8);color:#0f0;font-family:var(--mono);font-size:11px;padding:10px;border-radius:8px;z-index:9;line-height:1.6"></div>
       <div class="p-cc" hidden><span></span></div><div class="p-center"><button class="p-bigplay">${icon("pause",34)}</button></div><div class="p-toast"></div>
@@ -849,7 +870,28 @@ const Player={ active:null,st:null,el:null,raf:null,last:0,ctl:null,keyH:null,
       <span class="p-time">${st.live?'<span style="color:var(--live);font-weight:700">● LIVE</span>':'<b>0:00</b> / '+fmtDur(v.dur)}</span><div class="p-spacer"></div>
       <button class="p-btn sm" data-a="cc" title="Subtitles (c)">${icon("cc")}</button><button class="p-btn sm" data-a="settings" title="Settings">${icon("gear")}</button>
       <button class="p-btn sm" data-a="pip" title="Miniplayer (i)">${icon("pip")}</button><button class="p-btn sm" data-a="theater" title="Theater (t)">${icon("theater")}</button><button class="p-btn sm" data-a="full" title="Fullscreen (f)">${icon("fullscreen")}</button></div></div>`;
-    this.$=s=>sh.querySelector(s); this.bind(); this.paintChapters(); this.updateAll(); if(!Prefs.get("ambient"))this.$(".ambient").style.display="none"; this.last=performance.now(); this.loop(); this.scheduleHide(); return sh; },
+    this.$=s=>sh.querySelector(s); this.video=null; st.embed=!!(v.embed&&v.embed.provider); this.setupMedia(v,st,sh);
+    this.bind(); this.paintChapters(); this.updateAll(); if(!Prefs.get("ambient"))this.$(".ambient").style.display="none"; this.last=performance.now(); if(!this.video&&!st.embed)this.loop(); this.scheduleHide(); return sh; },
+  setupMedia(v,st,sh){ const surface=sh.querySelector(".p-surface"); const self=this;
+    if(st.embed){ const p=v.embed; const ifr=document.createElement("iframe");
+      ifr.src=p.provider==="youtube"?`https://www.youtube-nocookie.com/embed/${p.id}?autoplay=1&rel=0&modestbranding=1`:`https://player.vimeo.com/video/${p.id}?autoplay=1`;
+      ifr.allow="autoplay; fullscreen; picture-in-picture; encrypted-media"; ifr.setAttribute("allowfullscreen","");
+      ifr.style.cssText="position:absolute;inset:0;width:100%;height:100%;border:0;z-index:4;background:#000"; sh.insertBefore(ifr,surface);
+      surface.style.display="none"; const cc=sh.querySelector(".p-controls"); if(cc)cc.style.display="none"; const ce=sh.querySelector(".p-center"); if(ce)ce.style.display="none"; return; }
+    if(!(v.src&&(v.srcType==="file"||v.srcType==="url"))) return; // no real media — keep the poster surface
+    const vid=document.createElement("video"); vid.className="p-video"; vid.src=v.src; vid.setAttribute("playsinline",""); vid.playsInline=true; vid.preload="metadata"; if(realImg(v.poster))vid.poster=v.poster;
+    vid.style.cssText="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:1"; vid.volume=st.muted?0:st.volume; vid.muted=st.muted; vid.playbackRate=st.rate;
+    surface.style.display="none"; sh.insertBefore(vid,surface); this.video=vid;
+    ["p-gradient","p-cc","p-center","p-controls","stats-nerds","p-toast"].forEach((c,i)=>{ const e=sh.querySelector("."+c); if(e)e.style.zIndex=String(5+i); });
+    vid.addEventListener("loadedmetadata",()=>{ if(isFinite(vid.duration)&&vid.duration>0){ st.dur=vid.duration; const pt=self.$(".p-time"); if(pt&&!st.live)pt.innerHTML="<b>"+fmtDur(st.cur)+"</b> / "+fmtDur(st.dur); } if(st.cur>0&&isFinite(vid.duration)&&st.cur<vid.duration){ try{vid.currentTime=st.cur;}catch(e){} } self.paintChapters(); });
+    vid.addEventListener("timeupdate",()=>{ st.cur=vid.currentTime; self.updateTime(); self._pt=(self._pt||0)+1; if(self._pt%20===0)saveProgress(v.id,st.cur,st.cur/(st.dur||1)); });
+    vid.addEventListener("progress",()=>{ try{ if(vid.buffered.length)st.buffered=Math.min(1,vid.buffered.end(vid.buffered.length-1)/(st.dur||1)); }catch(e){} });
+    vid.addEventListener("play",()=>{ st.playing=true; st.ended=false; self.updatePlay(); self.scheduleHide(); });
+    vid.addEventListener("pause",()=>{ st.playing=false; self.updatePlay(); self.showCtl(); });
+    vid.addEventListener("ended",()=>self.onEnd());
+    vid.addEventListener("error",()=>{ self.flash("Can't play this video"); surface.style.display=""; });
+    vid.onclick=()=>self.toggle();
+    const pr=vid.play(); if(pr&&pr.catch)pr.catch(()=>{ st.playing=false; self.updatePlay(); self.showCtl(); }); },
   bind(){ const sh=this.el,st=this.st; this.$(".p-bigplay").onclick=()=>this.toggle(); this.$(".p-surface").onclick=()=>this.toggle();
     sh.querySelectorAll("[data-a]").forEach(b=>b.onclick=e=>{e.stopPropagation();this.action(b.dataset.a);});
     this.$(".p-volslider input").oninput=e=>{st.volume=+e.target.value;st.muted=st.volume===0;Prefs.set("volume",st.volume||Prefs.get("volume"));Prefs.set("muted",st.muted);this.updateVol();};
@@ -868,13 +910,13 @@ const Player={ active:null,st:null,el:null,raf:null,last:0,ctl:null,keyH:null,
     else if(a==="cc"){st.captions=!st.captions;Prefs.set("captions",st.captions);this.$(".p-cc").hidden=!st.captions;this.flash("Subtitles "+(st.captions?"on":"off"));}
     else if(a==="settings")this.settings(); else if(a==="pip")this.mini(); else if(a==="theater"){st.theater=!st.theater;this.onTheater&&this.onTheater(st.theater);this.flash(st.theater?"Theater":"Default");}
     else if(a==="full"){const sh=this.el;if(document.fullscreenElement===sh)document.exitFullscreen?.();else sh.requestFullscreen?.().catch(()=>this.flash("Fullscreen blocked"));} },
-  toggle(){this.st.playing=!this.st.playing;this.st.ended=false;this.updatePlay();if(this.st.playing)this.scheduleHide();else this.showCtl();},
-  updatePlay(){const ic=this.st.playing?"pause":"play";this.$(".p-bigplay").innerHTML=icon(ic,34);this.$('[data-a="play"]').innerHTML=icon(ic);this.$(".p-surface").style.transform=this.st.playing?"scale(1.02)":"scale(1)";this.$(".p-center").style.opacity=this.st.playing?"0":"1";},
-  seek(t){this.st.cur=clamp(t,0,this.st.dur||t);this.st.ended=false;this.updateTime();saveProgress(this.st.v.id,this.st.cur,this.st.cur/(this.st.dur||1));},
+  toggle(){ if(this.video){ if(this.video.paused||this.video.ended)this.video.play().catch(()=>{}); else this.video.pause(); return; } this.st.playing=!this.st.playing;this.st.ended=false;this.updatePlay();if(this.st.playing)this.scheduleHide();else this.showCtl();},
+  updatePlay(){const ic=this.st.playing?"pause":"play";const bp=this.$(".p-bigplay");if(bp)bp.innerHTML=icon(ic,34);const pb=this.$('[data-a="play"]');if(pb)pb.innerHTML=icon(ic);const sf=this.$(".p-surface");if(sf)sf.style.transform=this.st.playing?"scale(1.02)":"scale(1)";const ce=this.$(".p-center");if(ce)ce.style.opacity=this.st.playing?"0":"1";},
+  seek(t){ if(this.video){ const d=this.st.dur||this.video.duration||t; this.st.cur=clamp(t,0,d); this.st.ended=false; try{this.video.currentTime=this.st.cur;}catch(e){} this.updateTime(); return; } this.st.cur=clamp(t,0,this.st.dur||t);this.st.ended=false;this.updateTime();saveProgress(this.st.v.id,this.st.cur,this.st.cur/(this.st.dur||1));},
   seekBy(d){this.seek(this.st.cur+d);this.flash((d>0?"+":"")+d+"s");},
   setVol(x){this.st.volume=x;this.st.muted=x===0;Prefs.set("volume",x||Prefs.get("volume"));Prefs.set("muted",this.st.muted);this.$(".p-volslider input").value=x;this.updateVol();},
-  updateVol(){this.$('[data-a="mute"]').innerHTML=icon(this.st.muted||this.st.volume===0?"volmute":"vol");},
-  setRate(r){this.st.rate=r;Prefs.set("rate",r);this.flash(r+"× speed");},
+  updateVol(){ if(this.video){ this.video.muted=this.st.muted; this.video.volume=this.st.muted?0:this.st.volume; } this.$('[data-a="mute"]').innerHTML=icon(this.st.muted||this.st.volume===0?"volmute":"vol");},
+  setRate(r){this.st.rate=r;Prefs.set("rate",r);if(this.video)this.video.playbackRate=r;this.flash(r+"× speed");},
   next(){ const rel=this._related||[]; if(rel[0])go("/watch/"+rel[0].id); else this.flash("No next video"); },
   mini(){this.flash("Miniplayer");Mini.open(this.st.v,this.st.cur);go("/");},
   settings(){ const sh=this.el,st=this.st; const old=sh.querySelector(".p-settings"); if(old){old.remove();return;} const w=el("div",{class:"p-settings"});
@@ -886,7 +928,7 @@ const Player={ active:null,st:null,el:null,raf:null,last:0,ctl:null,keyH:null,
       w.innerHTML=`<div class="pm-head"><span class="back">${icon("chevleft",18)}</span> ${title}</div>`+opts.map(o=>`<div class="pm-item ${o===cur?"on":""}" data-o="${esc(o)}">${o}<span class="rt"></span></div>`).join("");
       w.querySelector(".back").onclick=main; w.querySelectorAll("[data-o]").forEach(x=>x.onclick=()=>{set(x.dataset.o);this.settings();this.settings();}); };
     main(); sh.append(w); setTimeout(()=>{const h=e=>{if(!w.contains(e.target)&&!e.target.closest('[data-a="settings"]')){w.remove();document.removeEventListener("click",h,true);}};document.addEventListener("click",h,true);},0); },
-  hoverPrev(e,t){const hp=this.$(".p-hoverprev"),tl=this.$(".p-timeline"),r=tl.getBoundingClientRect();hp.style.left=clamp(e.clientX-r.left,80,r.width-80)+"px";hp.querySelector("img").src=thumbURI(this.st.v.thumbSeed);hp.querySelector(".ht").textContent=fmtDur(t);},
+  hoverPrev(e,t){const hp=this.$(".p-hoverprev"),tl=this.$(".p-timeline"),r=tl.getBoundingClientRect();hp.style.left=clamp(e.clientX-r.left,80,r.width-80)+"px";hp.querySelector("img").src=vidPoster(this.st.v);hp.querySelector(".ht").textContent=fmtDur(t);},
   paintChapters(){const st=this.st,c=this.$(".p-chapmarks");if(!st.dur||!st.v.chapters||!st.v.chapters.length)return;c.innerHTML=st.v.chapters.filter(x=>x.t>0).map(x=>`<i style="left:${x.t/st.dur*100}%"></i>`).join("");},
   loop(){this.raf=requestAnimationFrame(ts=>{const dt=(ts-this.last)/1000;this.last=ts;const st=this.st;if(st.playing&&!st.seeking){if(st.live)st.cur+=dt;else{st.cur+=dt*st.rate;if(st.cur>=st.dur){st.cur=st.dur;this.onEnd();}}st.buffered=Math.min(1,Math.max(st.buffered,st.cur/(st.dur||1)+.12));this.updateTime();}this.loop();});},
   onEnd(){this.st.playing=false;this.st.ended=true;this.updatePlay();if(Prefs.get("autoplay")){this.flash("Up next…");setTimeout(()=>{if(this.st&&this.st.ended)this.next();},1200);}},
@@ -900,11 +942,13 @@ const Player={ active:null,st:null,el:null,raf:null,last:0,ctl:null,keyH:null,
   flash(m){const t=this.$(".p-toast");if(!t)return;t.textContent=m;t.classList.add("show");clearTimeout(this._ft);this._ft=setTimeout(()=>t.classList.remove("show"),900);},
   updateAll(){this.updatePlay();this.updateVol();this.updateTime();},
   destroy(silent){if(this.raf)cancelAnimationFrame(this.raf);clearTimeout(this.ctl);if(this.keyH)document.removeEventListener("keydown",this.keyH);if(this._fs)document.removeEventListener("fullscreenchange",this._fs);if(this._up)window.removeEventListener("mouseup",this._up);if(this._mv)window.removeEventListener("mousemove",this._mv);
-    if(!silent&&this.st&&this.st.playing&&!this.st.live&&!location.hash.startsWith("#/watch"))Mini.open(this.st.v,this.st.cur); this.st=null;this.active=null;this.el=null;this.raf=null;} };
+    const wasReal=!!this.video||(this.st&&this.st.embed);
+    if(this.video){ try{this.video.pause();this.video.removeAttribute("src");this.video.load();}catch(e){} this.video=null; }
+    if(!silent&&!wasReal&&this.st&&this.st.playing&&!this.st.live&&!location.hash.startsWith("#/watch"))Mini.open(this.st.v,this.st.cur); this.st=null;this.active=null;this.el=null;this.raf=null;} };
 
 /* ================================================================== WATCH ================================================================== */
 function relatedItem(v){ const o=v.owner||{}; const d=el("div",{class:"related-item",role:"link",tabindex:"0"});
-  d.innerHTML=`<div class="related-thumb"><img src="${thumbURI(v.thumbSeed,{label:o.displayName})}" alt="">${v.isLive?'<span class="d" style="background:var(--live)">LIVE</span>':`<span class="d">${fmtDur(v.dur)}</span>`}</div><div class="related-info"><div class="rt2">${esc(v.title)}</div><div class="rc">${esc(o.displayName)} ${vbadge(o)}</div><div class="rc">${fmtN(v.views)} views · ${ago(v.createdAt)}</div></div>`;
+  d.innerHTML=`<div class="related-thumb"><img src="${vidPoster(v,{label:o.displayName})}" alt="">${v.isLive?'<span class="d" style="background:var(--live)">LIVE</span>':`<span class="d">${fmtDur(v.dur)}</span>`}</div><div class="related-info"><div class="rt2">${esc(v.title)}</div><div class="rc">${esc(o.displayName)} ${vbadge(o)}</div><div class="rc">${fmtN(v.views)} views · ${ago(v.createdAt)}</div></div>`;
   d.onclick=()=>go((v.kind==="clip"?"/clip/":"/watch/")+v.id); d.onkeydown=e=>{if(e.key==="Enter")d.onclick();}; return d; }
 function actionPill(ic,label,onClick){ const b=el("button",{class:"btn",onclick:onClick}); b.innerHTML=icon(ic,20)+(label?`<span>${label}</span>`:""); return b; }
 V.watch=async(params,query)=>{ Mini.close(); let data; try{ data=await API.get("/api/videos/"+params.id); }catch(e){ return watchMissing(e); }
@@ -915,7 +959,7 @@ V.watch=async(params,query)=>{ Mini.close(); let data; try{ data=await API.get("
   const onTheater=on=>{const sh=Player.el;if(!sh)return;if(on){theaterSlot.append(sh);sh.classList.add("theater");}else{main.insertBefore(sh,main.firstChild);sh.classList.remove("theater");}};
   const sh=Player.create(v,{startAt,onTheater}); Player._related=data.related; main.append(sh);
   main.append(el("h1",{class:"w-title"},v.title));
-  const bar=el("div",{class:"w-actionbar"}); const chanBox=el("div",{class:"w-chan"}); chanBox.innerHTML=`<img src="${avatarURI(o.avatarSeed,o.displayName)}" data-nav="/channel/${o.id}" alt=""><div style="flex:1"><div class="nm" data-nav="/channel/${o.id}">${esc(o.displayName)} ${vbadge(o)}</div><div class="sb">${fmtN(o.subscribers||0)} subscribers</div></div>`; chanBox.append(subscribeBtn(o.id));
+  const bar=el("div",{class:"w-actionbar"}); const chanBox=el("div",{class:"w-chan"}); chanBox.innerHTML=`<img src="${avaSrc(o)}" data-nav="/channel/${o.id}" alt=""><div style="flex:1"><div class="nm" data-nav="/channel/${o.id}">${esc(o.displayName)} ${vbadge(o)}</div><div class="sb">${fmtN(o.subscribers||0)} subscribers</div></div>`; chanBox.append(subscribeBtn(o.id));
   const acts=el("div",{class:"w-actions"}); acts.append(likeControls(v,data.liked),actionPill("share","Share",()=>openShare(v)),actionPill("save","Save",()=>openSaveToPlaylist(v)));
   const moreB=el("button",{class:"btn icon",onclick:e=>openMenu(e.currentTarget,[{icon:"transcript",label:"Show transcript",onClick:()=>toggleTranscript(v,side)},{icon:"flag",label:"Report",onClick:()=>openReport({targetKind:"video",targetId:v.id})}])}); moreB.innerHTML=icon("more",20); acts.append(moreB);
   bar.append(chanBox,acts); main.append(bar);
@@ -938,13 +982,13 @@ function toggleTranscript(v,side){ const host=side?side.querySelector("#side-pan
 async function commentsSection(v){ const sec=el("div",{style:"margin-top:28px"}); let comments=[]; try{ comments=(await API.get("/api/videos/"+v.id+"/comments")).comments; }catch(e){}
   const head=el("div",{style:"display:flex;align-items:center;gap:16px;margin-bottom:20px"}); head.innerHTML=`<h2 style="margin:0;font-size:18px">${fmtN(comments.length)} Comments</h2>`; sec.append(head);
   if(v.allowComments===false){ sec.append(el("div",{class:"info-panel"},el("span",{html:icon("info",18)}),el("div",{},"Comments are turned off for this video."))); return sec; }
-  const add=el("div",{style:"display:flex;gap:14px;margin-bottom:26px"}); add.innerHTML=`<img src="${avatarURI(Auth.user.avatarSeed,Auth.user.displayName)}" style="width:42px;height:42px;border-radius:50%" alt="">`;
+  const add=el("div",{style:"display:flex;gap:14px;margin-bottom:26px"}); add.innerHTML=`<img src="${avaSrc(Auth.user)}" style="width:42px;height:42px;border-radius:50%" alt="">`;
   const bx=el("div",{style:"flex:1"}); const ta=el("textarea",{class:"textarea",placeholder:"Add a comment…",style:"min-height:44px"}); const acts=el("div",{style:"display:flex;gap:10px;justify-content:flex-end;margin-top:8px"});
   acts.append(el("button",{class:"btn sm ghost",onclick:()=>{ta.value="";}},"Cancel"),el("button",{class:"btn sm brand",onclick:async()=>{const t=ta.value.trim();if(!t)return;try{const{comment}=await API.post("/api/videos/"+v.id+"/comments",{text:t});comments.unshift(comment);ta.value="";list.prepend(commentEl(comment,v,comments,list));head.querySelector("h2").textContent=fmtN(comments.length)+" Comments";toast("Comment posted",{type:"ok"});}catch(e){toast(e.message,{type:"err"});}}},"Comment"));
   bx.append(ta,acts); add.append(bx); sec.append(add);
   const list=el("div"); sec.append(list); const tops=comments.filter(c=>!c.parentId); tops.forEach(c=>list.append(commentEl(c,v,comments,list))); return sec; }
 function commentEl(c,v,all,list){ const a=c.author||{displayName:"?",avatarSeed:"?"}; const d=el("div",{class:"cmt"}); const replies=(all||[]).filter(x=>x.parentId===c.id);
-  d.innerHTML=`<img class="ava" src="${avatarURI(a.avatarSeed,a.displayName)}" alt=""><div class="cbody">${c.pinned?`<div class="pinned">${icon("bolt",13)} Pinned</div>`:""}<div class="chead"><span class="au">${esc(a.displayName)}</span>${a.id===v.ownerId?'<span class="mb">Creator</span>':""}${a.role&&a.role!=="user"?'<span class="mb" style="background:var(--accent)">'+esc(a.role)+'</span>':""}<span class="tm">${ago(c.createdAt)}</span></div><div class="ctext">${linkify(c.text)}</div><div class="cfoot"><button data-a="like">${icon("thumbup",16)} <span>${fmtN(c.likes||0)}</span></button><button data-a="reply">Reply</button>${(Auth.user.id===c.userId||Auth.user.id===v.ownerId||Auth.isAdmin())?'<button data-a="del">'+icon("trash",15)+'</button>':""}${a.id!==v.ownerId&&v.ownerId===Auth.user.id?'<button data-a="pin">'+icon("bolt",15)+'</button>':""}<button data-a="report">${icon("flag",15)}</button></div>${replies.length?`<div class="replies" style="margin-top:12px;padding-left:6px;border-left:2px solid var(--glass-brd)"></div>`:""}</div>`;
+  d.innerHTML=`<img class="ava" src="${avaSrc(a)}" alt=""><div class="cbody">${c.pinned?`<div class="pinned">${icon("bolt",13)} Pinned</div>`:""}<div class="chead"><span class="au">${esc(a.displayName)}</span>${a.id===v.ownerId?'<span class="mb">Creator</span>':""}${a.role&&a.role!=="user"?'<span class="mb" style="background:var(--accent)">'+esc(a.role)+'</span>':""}<span class="tm">${ago(c.createdAt)}</span></div><div class="ctext">${linkify(c.text)}</div><div class="cfoot"><button data-a="like">${icon("thumbup",16)} <span>${fmtN(c.likes||0)}</span></button><button data-a="reply">Reply</button>${(Auth.user.id===c.userId||Auth.user.id===v.ownerId||Auth.isAdmin())?'<button data-a="del">'+icon("trash",15)+'</button>':""}${a.id!==v.ownerId&&v.ownerId===Auth.user.id?'<button data-a="pin">'+icon("bolt",15)+'</button>':""}<button data-a="report">${icon("flag",15)}</button></div>${replies.length?`<div class="replies" style="margin-top:12px;padding-left:6px;border-left:2px solid var(--glass-brd)"></div>`:""}</div>`;
   const rw=d.querySelector(".replies"); if(rw)replies.forEach(r=>rw.append(commentEl(r,v,all,list)));
   d.querySelector('[data-a="like"]').onclick=async e=>{try{const r=await API.post("/api/comments/"+c.id+"/like");e.currentTarget.querySelector("span").textContent=fmtN(r.likes);}catch(x){}};
   d.querySelector('[data-a="reply"]').onclick=()=>{ const rb=el("div",{style:"display:flex;gap:10px;margin-top:10px"}); const inp=el("input",{class:"input",placeholder:"Reply…"}); const snd=el("button",{class:"btn sm brand",onclick:async()=>{if(!inp.value.trim())return;try{const{comment}=await API.post("/api/videos/"+v.id+"/comments",{text:inp.value.trim(),parentId:c.id});all.push(comment);rb.remove();let rww=d.querySelector(".replies");if(!rww){rww=el("div",{class:"replies",style:"margin-top:12px;padding-left:6px;border-left:2px solid var(--glass-brd)"});d.querySelector(".cbody").append(rww);}rww.append(commentEl(comment,v,all,list));}catch(x){toast(x.message,{type:"err"});}}},"Reply"); snd.innerHTML="Reply"; rb.append(inp,snd); d.querySelector(".cbody").append(rb); inp.focus(); };
@@ -956,18 +1000,27 @@ function linkify(t){ return esc(t).replace(/(#[\w]+)/g,'<span class="tag" data-n
 /* ================================================================== BLOXCLIPS ================================================================== */
 function railBtn(ic,label,cls=""){ const b=el("button",{class:"rail-btn "+cls}); b.innerHTML=`<span class="rc">${icon(ic,24)}</span><span class="rl">${label}</span>`; return b; }
 function buildClipFeed(clips,startIndex){ const feed=el("div",{class:"clips-feed",tabindex:"0"}); clips.forEach(c=>feed.append(clipSlide(c)));
-  let activeSlide=null,pos=0,paused=false; const setActive=s=>{if(activeSlide===s)return;if(activeSlide)activeSlide.classList.remove("active","paused");activeSlide=s;if(s){s.classList.add("active");pos=0;paused=false;API.post("/api/videos/"+s.dataset.id+"/view").catch(()=>{});}};
-  feed._toggle=()=>{paused=!paused;activeSlide&&activeSlide.classList.toggle("paused",paused);}; feed._seek=p=>{if(activeSlide)pos=p*(+activeSlide.dataset.dur);};
+  let activeSlide=null,pos=0,paused=false;
+  const setActive=s=>{if(activeSlide===s)return;
+    if(activeSlide){activeSlide.classList.remove("active","paused");const ov=activeSlide.querySelector(".clip-vid");if(ov){try{ov.pause();}catch(e){}}}
+    activeSlide=s;if(s){s.classList.add("active");pos=0;paused=false;API.post("/api/videos/"+s.dataset.id+"/view").catch(()=>{});
+      const nv=s.querySelector(".clip-vid");if(nv){if(!nv.getAttribute("src")&&nv.dataset.src)nv.src=nv.dataset.src;try{nv.currentTime=0;}catch(e){}const pr=nv.play();if(pr&&pr.catch)pr.catch(()=>{});}}};
+  feed._toggle=()=>{paused=!paused;if(activeSlide){activeSlide.classList.toggle("paused",paused);const v=activeSlide.querySelector(".clip-vid");if(v){if(paused)v.pause();else{v.muted=false;v.play().catch(()=>{v.muted=true;v.play().catch(()=>{});});}}}};
+  feed._seek=p=>{if(activeSlide){const v=activeSlide.querySelector(".clip-vid");if(v&&v.duration){try{v.currentTime=p*v.duration;}catch(e){}}else pos=p*(+activeSlide.dataset.dur);}};
   const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting&&e.intersectionRatio>=.6)setActive(e.target);}),{root:feed,threshold:[.6]}); [...feed.children].forEach(s=>io.observe(s));
-  const tick=setInterval(()=>{if(!document.body.contains(feed)){clearInterval(tick);io.disconnect();return;}if(!activeSlide||paused)return;const dur=+activeSlide.dataset.dur||20;pos+=.1;if(pos>=dur)pos=0;const bar=activeSlide.querySelector(".clip-prog i");if(bar)bar.style.width=pos/dur*100+"%";},100);
+  const tick=setInterval(()=>{if(!document.body.contains(feed)){clearInterval(tick);io.disconnect();return;}if(!activeSlide||paused)return;
+    const v=activeSlide.querySelector(".clip-vid");let frac;
+    if(v&&v.duration){frac=v.currentTime/v.duration;}else{const dur=+activeSlide.dataset.dur||20;pos+=.1;if(pos>=dur)pos=0;frac=pos/dur;}
+    const bar=activeSlide.querySelector(".clip-prog i");if(bar)bar.style.width=(frac||0)*100+"%";},100);
   feed.addEventListener("keydown",e=>{if(e.key==="ArrowDown"||e.key==="ArrowUp"){e.preventDefault();const idx=[...feed.children].indexOf(activeSlide);const n=clamp(idx+(e.key==="ArrowDown"?1:-1),0,feed.children.length-1);feed.children[n].scrollIntoView({behavior:"smooth"});}if(e.key===" "){e.preventDefault();feed._toggle();}});
   setTimeout(()=>{const s=feed.children[startIndex||0];if(s){s.scrollIntoView();setActive(s);}feed.focus();},30);
   if(!localStorage.getItem("bloxtube:clipseen")){const h=el("div",{class:"clips-hint"});h.innerHTML=icon("chevdown",16)+" Swipe or use ↑ ↓ · tap to pause";feed.append(h);setTimeout(()=>h.remove(),4200);try{localStorage.setItem("bloxtube:clipseen","1");}catch(e){}}
   return feed; }
 function clipSlide(c){ const o=c.owner||{}; const slide=el("div",{class:"clip-slide",dataset:{id:c.id,dur:c.dur||20}}); const subbed=curSubbed(o.id);
-  slide.innerHTML=`<div class="clip-stage"><div class="clip-surface" style="background-image:url(&quot;${thumbURI(c.thumbSeed,{ratio:'9/16',label:o.displayName})}&quot;)"></div><div class="clip-grad"></div><div class="clip-top"><div class="clip-prog"><i></i></div></div><div class="clip-pausebtn"><div class="pb">${icon("play",30)}</div></div>
-    <div class="clip-info"><div class="cu"><img src="${avatarURI(o.avatarSeed,o.displayName)}" data-nav="/channel/${o.id}" alt=""><span class="h" data-nav="/channel/${o.id}">@${esc(o.handle||o.displayName)} ${vbadge(o)}</span><button class="cfollow ${subbed?"on":""}">${subbed?"Following":"Follow"}</button></div><div class="clip-cap">${esc(c.title)} ${(c.hashtags||[]).map(h=>`<span class="tag" data-nav="/search/${encodeURIComponent(h)}">${esc(h)}</span>`).join(" ")}</div></div></div>
-    <div class="clip-rail"><div class="rail-btn"><span class="rail-ava" data-nav="/channel/${o.id}"><img src="${avatarURI(o.avatarSeed,o.displayName)}" alt=""></span></div></div>`;
+  const clipReal=c.src&&(c.srcType==="file"||c.srcType==="url");
+  slide.innerHTML=`<div class="clip-stage"><div class="clip-surface" style="background-image:url(&quot;${vidPoster(c,{ratio:'9/16',label:o.displayName})}&quot;)"></div>${clipReal?`<video class="clip-vid" muted loop playsinline preload="none" data-src="${esc(c.src)}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1"></video>`:""}<div class="clip-grad"></div><div class="clip-top"><div class="clip-prog"><i></i></div></div><div class="clip-pausebtn"><div class="pb">${icon("play",30)}</div></div>
+    <div class="clip-info"><div class="cu"><img src="${avaSrc(o)}" data-nav="/channel/${o.id}" alt=""><span class="h" data-nav="/channel/${o.id}">@${esc(o.handle||o.displayName)} ${vbadge(o)}</span><button class="cfollow ${subbed?"on":""}">${subbed?"Following":"Follow"}</button></div><div class="clip-cap">${esc(c.title)} ${(c.hashtags||[]).map(h=>`<span class="tag" data-nav="/search/${encodeURIComponent(h)}">${esc(h)}</span>`).join(" ")}</div></div></div>
+    <div class="clip-rail"><div class="rail-btn"><span class="rail-ava" data-nav="/channel/${o.id}"><img src="${avaSrc(o)}" alt=""></span></div></div>`;
   slide.querySelector(".clip-stage").onclick=e=>{if(e.target.closest("[data-nav]")||e.target.closest(".cfollow")||e.target.closest(".clip-prog"))return;slide.closest(".clips-feed")._toggle();};
   slide.querySelector(".clip-prog").onclick=e=>{const r=e.currentTarget.getBoundingClientRect();slide.closest(".clips-feed")._seek((e.clientX-r.left)/r.width);};
   const follow=slide.querySelector(".cfollow"); follow.onclick=async()=>{const now=await toggleSub(o.id);follow.classList.toggle("on",now);follow.textContent=now?"Following":"Follow";};
@@ -988,56 +1041,77 @@ V.clips=async()=>{ const {videos}=await API.get("/api/videos?kind=clip&limit=50"
 V.clip=async(params)=>{ const {videos}=await API.get("/api/videos?kind=clip&limit=50"); const idx=videos.findIndex(c=>c.id===params.id); if(idx<0){ try{ const {video}=await API.get("/api/videos/"+params.id); const wrap=el("div"); wrap.append(buildClipFeed([video],0)); return wrap; }catch(e){ const w=el("div",{class:"main-pad"});w.append(emptyState("clips","Clip not found",""));return w; } } const ordered=[videos[idx],...videos.filter((_,i)=>i!==idx)]; const wrap=el("div"); wrap.append(buildClipFeed(ordered,0)); return wrap; };
 
 /* ================================================================== UPLOAD ================================================================== */
-V.upload=async(params,query)=>{ const kind=query.get("kind")||"video"; const kindLabel={video:"video",clip:"BloxClip",live:"livestream",podcast:"podcast episode"}[kind];
+V.upload=async(params,query)=>{ const kind=query.get("kind")||"video"; const kindLabel={video:"video",clip:"BloxClip",live:"livestream",podcast:"podcast episode"}[kind]||"video";
   const wrap=el("div",{class:"main-pad",style:"max-width:1100px"}); wrap.append(pageHead(kind==="live"?"Go live":"Upload "+kindLabel,null,kind==="clip"?"clips":kind==="live"?"live":"upload"));
   if(Auth.config&&Auth.config.flags&&Auth.config.flags.uploads===false){ wrap.append(el("div",{class:"info-panel"},el("span",{html:icon("warn",18)}),el("div",{},"Uploads are temporarily disabled by an admin."))); }
   const grid=el("div",{style:"display:grid;grid-template-columns:1fr 340px;gap:20px"}); const left=el("div"),right=el("div"); grid.append(left,right); wrap.append(grid);
-  const state={thumbSeed:uid("t_"),dur:kind==="clip"?rand(15,60)|0:0,fileReady:false};
-  right.innerHTML=`<div class="card"><b>${kind==="live"?"Stream checklist":"Processing"}</b><div style="color:var(--text-dim);font-size:13px;margin-top:8px;line-height:1.9">${icon("check",14)} Resumable & background<br>${icon("check",14)} Auto transcoding & HDR<br>${icon("check",14)} Auto captions & chapters<br>${icon("check",14)} Copyright & safety checks</div><div style="margin-top:10px"><span class="pill sim">Metadata prototype</span></div></div>`;
-  const drop=el("div",{class:"up-drop"});
-  drop.innerHTML=`<div class="uc">${icon(kind==="live"?"live":"upload",46)}</div><h3 style="margin:0 0 6px">${kind==="live"?"Set up your stream":"Drag & drop your "+kindLabel}</h3><p style="color:var(--text-dim)">${kind==="live"?"Configure and go live":"Or click to select a file"}</p><button class="btn brand big" style="margin-top:14px">${kind==="live"?"Continue":"Select file"}</button>`;
-  left.append(drop);
-  drop.onclick=()=>startFlow();
-  function startFlow(){ left.innerHTML=""; const proc=el("div",{class:"card",style:"margin-bottom:16px"});
-    if(kind!=="live"){ const checks=[["Uploading","run"],["Transcoding","pend"],["Auto captions","pend"],["Copyright check","pend"],["Safety check","pend"]];
-      proc.innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><b style="flex:1">Processing “${kindLabel}.mp4”</b><span style="color:var(--text-dim);font-size:12px" id="up-eta">~2 min</span></div><div class="progress-track"><i id="up-bar" style="width:3%"></i></div><div id="up-checks" style="margin-top:12px">${checks.map(c=>`<div class="check-row"><span class="dot ${c[1]}">${c[1]==="ok"?icon("check",12):""}</span> ${c[0]}</div>`).join("")}</div>`; left.append(proc);
-      let p=3,step=0; const bar=proc.querySelector("#up-bar"),rows=proc.querySelectorAll(".check-row");
-      const iv=setInterval(()=>{if(!document.body.contains(bar)){clearInterval(iv);return;}p=Math.min(100,p+rand(4,11));bar.style.width=p+"%";const tgt=Math.floor(p/100*checks.length);while(step<tgt&&step<checks.length){rows[step].querySelector(".dot").className="dot ok";rows[step].querySelector(".dot").innerHTML=icon("check",12);step++;if(step<checks.length){rows[step].querySelector(".dot").className="dot run";}}proc.querySelector("#up-eta").textContent=p>=100?"Done ✓":"~"+Math.max(1,Math.round((100-p)/40))+" min";if(p>=100){clearInterval(iv);rows.forEach(r=>{r.querySelector(".dot").className="dot ok";r.querySelector(".dot").innerHTML=icon("check",12);});}},650);
-    }
-    const det=el("div",{class:"card"}); det.innerHTML=`<b>Details</b>
-      <div class="field-group" style="margin-top:12px"><label>Title <span class="counter">required</span></label><input class="input" id="u-title" placeholder="A title that describes your ${kindLabel}"></div>
-      <div class="field-group"><label>Description</label><textarea class="textarea" id="u-desc" placeholder="Tell viewers about it"></textarea></div>
-      <div class="field-group"><label>Thumbnail</label><div style="display:flex;gap:10px" id="u-thumbs">${[0,1,2].map(i=>`<img class="u-thumb" data-s="${state.thumbSeed}_${i}" src="${thumbURI(state.thumbSeed+'_'+i,{ratio:kind==='clip'?'9/16':'16/9'})}" style="width:${kind==='clip'?'70px':'130px'};aspect-ratio:${kind==='clip'?'9/16':'16/9'};border-radius:10px;object-fit:cover;cursor:pointer;border:2px solid ${i===0?'var(--brand)':'transparent'}">`).join("")}</div><div class="hint">Auto-generated suggestions ${icon("sparkle",12)}</div></div>
-      <div style="display:flex;gap:12px"><div class="field-group" style="flex:1"><label>Category</label><select class="selectbox" id="u-cat">${["Gaming","Music","Learning","News","Builds","Comedy","Sports","Tech","Podcasts"].map(c=>`<option>${c}</option>`).join("")}</select></div><div class="field-group" style="flex:1"><label>Duration (sec)</label><input class="input" id="u-dur" type="number" min="1" value="${Math.round(state.dur)||(kind==='clip'?30:300)}"></div></div>
-      <div class="field-group"><label>Tags (comma-separated)</label><input class="input" id="u-tags" placeholder="e.g. tower siege, guide"></div>
-      <details style="margin:8px 0"><summary style="cursor:pointer;font-weight:600;padding:8px 0">More options</summary>
-        <div class="setting-row"><div class="st"><div class="t">Auto-captions (CC)</div></div><span class="switch"><input type="checkbox" id="u-cc" checked><span class="sl"></span></span></div>
-        <div class="setting-row"><div class="st"><div class="t">Allow comments</div></div><span class="switch"><input type="checkbox" id="u-com" checked><span class="sl"></span></span></div>
-        <div class="setting-row"><div class="st"><div class="t">Allow remixing to BloxClips</div></div><span class="switch"><input type="checkbox" id="u-rmx" checked><span class="sl"></span></span></div>
-        <div class="field-group" style="margin-top:12px"><label>Resolution</label><select class="selectbox" id="u-res"><option>1080p</option><option>1440p</option><option>4K</option><option>8K</option><option>720p</option></select></div>
-      </details>
-      <div class="field-group"><label>Visibility</label><select class="selectbox" id="u-vis"><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></div>`;
-    let sel=state.thumbSeed+"_0"; det.querySelectorAll(".u-thumb").forEach(im=>im.onclick=()=>{sel=im.dataset.s;det.querySelectorAll(".u-thumb").forEach(x=>x.style.borderColor="transparent");im.style.borderColor="var(--brand)";});
-    left.append(det);
-    const foot=el("div",{style:"display:flex;gap:10px;justify-content:flex-end;margin-top:16px"});
-    const pub=el("button",{class:"btn brand big",onclick:async()=>{ const title=det.querySelector("#u-title").value.trim(); if(!title){toast("Add a title first");return;} pub.disabled=true;pub.textContent="Publishing…";
-      try{ const body={ title, desc:det.querySelector("#u-desc").value, kind:kind==="live"?"live":kind, category:det.querySelector("#u-cat").value, dur:+det.querySelector("#u-dur").value||(kind==="clip"?30:300), thumbSeed:sel, tags:det.querySelector("#u-tags").value.split(",").map(t=>t.trim()).filter(Boolean), hashtags:(det.querySelector("#u-desc").value.match(/#[\w]+/g)||[]), captions:det.querySelector("#u-cc")?.checked, allowComments:det.querySelector("#u-com")?.checked, allowRemix:det.querySelector("#u-rmx")?.checked, resolution:det.querySelector("#u-res")?.value||"1080p", visibility:det.querySelector("#u-vis").value };
-        const {video}=await API.post("/api/videos",body); toast((kind==="live"?"You're live 🔴":"Published 🎉")+" (prototype)",{type:"ok"}); go(kind==="clip"?"/clip/"+video.id:"/watch/"+video.id);
-      }catch(e){ toast(e.message,{type:"err"}); pub.disabled=false;pub.textContent=kind==="live"?"Go live":"Publish"; } }},kind==="live"?"Go live":"Publish");
-    foot.append(el("button",{class:"btn",onclick:()=>go("/studio")},"Cancel"),pub); left.append(foot);
-  }
-  if(kind==="live")startFlow();
+  const state={ file:null, dur:0, w:0, h:0, posterBlob:null, posterUrl:"", thumbSeed:uid("t_") };
+  right.innerHTML=`<div class="card"><b>How your ${kind==="live"?"stream":"upload"} works</b><div style="color:var(--text-dim);font-size:13px;margin-top:8px;line-height:1.9">${icon("check",14)} Stored on the BloxTube server<br>${icon("check",14)} Streamed with real seeking<br>${icon("check",14)} A frame becomes your thumbnail<br>${icon("check",14)} Up to 200 MB per file<br>${icon("check",14)} Or paste a YouTube / Vimeo / .mp4 link</div></div>`;
+  // ---- source picker ----
+  const srcCard=el("div",{class:"card",style:"margin-bottom:16px;padding:0;overflow:hidden"});
+  const fileInput=el("input",{type:"file",accept:kind==="podcast"?"video/*,audio/*":"video/*",style:"display:none"});
+  const drop=el("div",{class:"up-drop",style:"margin:0;border:0"});
+  srcCard.append(fileInput,drop); left.append(srcCard);
+  const detHost=el("div"); left.append(detHost);
+  function renderDrop(){ drop.innerHTML=`<div class="uc">${icon(kind==="live"?"live":"upload",46)}</div><h3 style="margin:0 0 6px">${kind==="live"?"Attach your stream (optional)":"Drag & drop your "+kindLabel}</h3><p style="color:var(--text-dim)">Or click to choose a file · up to 200 MB</p><button class="btn brand big" type="button" data-a="pick" style="margin-top:14px">Select file</button><div style="margin-top:12px"><button class="btn sm ghost" type="button" data-a="link">Paste a link instead</button></div>`;
+    drop.querySelector('[data-a="pick"]').onclick=()=>fileInput.click(); drop.querySelector('[data-a="link"]').onclick=useLink; }
+  function useLink(){ state.file=null; drop.innerHTML=`<div style="text-align:left;padding:6px"><label style="font-weight:600">Video link</label><input class="input" id="u-link" placeholder="YouTube, Vimeo, or a direct .mp4 / .webm URL" style="margin-top:8px"><div class="hint" style="margin-top:8px">We'll embed YouTube / Vimeo, or stream a direct file link. <button class="btn sm ghost" type="button" data-a="fileback">Upload a file instead</button></div></div>`;
+    drop.querySelector('[data-a="fileback"]').onclick=()=>renderDrop(); }
+  async function onPicked(file){ if(!file)return; if(file.size>200*1024*1024){ toast("That file is over 200 MB — pick a smaller one.",{type:"err"}); return; }
+    state.file=file; drop.innerHTML=`<div style="padding:14px;color:var(--text-dim)">Reading “${esc(file.name)}”…</div>`;
+    const meta=await readVideoMeta(file); state.dur=meta.dur||0; state.w=meta.w||0; state.h=meta.h||0; state.posterBlob=meta.poster;
+    if(state.posterUrl){ try{URL.revokeObjectURL(state.posterUrl);}catch(e){} } state.posterUrl=meta.poster?URL.createObjectURL(meta.poster):"";
+    drop.innerHTML=`<div style="display:flex;gap:14px;align-items:center;text-align:left;padding:6px">${state.posterUrl?`<img src="${state.posterUrl}" style="width:150px;aspect-ratio:16/9;object-fit:cover;border-radius:10px;flex:none">`:`<div style="width:150px;aspect-ratio:16/9;border-radius:10px;background:var(--glass-3);display:grid;place-items:center;flex:none">${icon("upload",26)}</div>`}<div style="flex:1;min-width:0"><b style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(file.name)}</b><div style="color:var(--text-dim);font-size:13px;margin-top:2px">${(file.size/1048576).toFixed(1)} MB${state.dur?" · "+fmtDur(state.dur):""}${state.w?" · "+state.w+"×"+state.h:""}</div><button class="btn sm ghost" type="button" data-a="change" style="margin-top:8px">Choose a different file</button></div></div>`;
+    drop.querySelector('[data-a="change"]').onclick=()=>{ state.file=null; renderDrop(); };
+    const dd=detHost.querySelector("#u-dur"); if(dd&&state.dur)dd.value=state.dur; }
+  renderDrop();
+  fileInput.onchange=e=>onPicked(e.target.files[0]);
+  drop.addEventListener("dragover",e=>{e.preventDefault();drop.style.opacity=".7";});
+  drop.addEventListener("dragleave",()=>drop.style.opacity="1");
+  drop.addEventListener("drop",e=>{e.preventDefault();drop.style.opacity="1";if(e.dataTransfer.files&&e.dataTransfer.files[0])onPicked(e.dataTransfer.files[0]);});
+  // ---- details ----
+  const det=el("div",{class:"card"}); det.innerHTML=`<b>Details</b>
+    <div class="field-group" style="margin-top:12px"><label>Title <span class="counter">required</span></label><input class="input" id="u-title" placeholder="A title that describes your ${kindLabel}"></div>
+    <div class="field-group"><label>Description</label><textarea class="textarea" id="u-desc" placeholder="Tell viewers about it"></textarea></div>
+    <div style="display:flex;gap:12px"><div class="field-group" style="flex:1"><label>Category</label><select class="selectbox" id="u-cat">${["Gaming","Music","Learning","News","Builds","Comedy","Sports","Tech","Podcasts"].map(c=>`<option>${c}</option>`).join("")}</select></div><div class="field-group" style="flex:1"><label>Duration (sec)</label><input class="input" id="u-dur" type="number" min="1" placeholder="auto" value="${kind==='clip'?30:''}"></div></div>
+    <div class="field-group"><label>Tags (comma-separated)</label><input class="input" id="u-tags" placeholder="e.g. tower siege, guide"></div>
+    <details style="margin:8px 0"><summary style="cursor:pointer;font-weight:600;padding:8px 0">More options</summary>
+      <div class="setting-row"><div class="st"><div class="t">Auto-captions (CC)</div></div><span class="switch"><input type="checkbox" id="u-cc" checked><span class="sl"></span></span></div>
+      <div class="setting-row"><div class="st"><div class="t">Allow comments</div></div><span class="switch"><input type="checkbox" id="u-com" checked><span class="sl"></span></span></div>
+      <div class="setting-row"><div class="st"><div class="t">Allow remixing to BloxClips</div></div><span class="switch"><input type="checkbox" id="u-rmx" checked><span class="sl"></span></span></div>
+      <div class="field-group" style="margin-top:12px"><label>Resolution</label><select class="selectbox" id="u-res"><option>1080p</option><option>1440p</option><option>4K</option><option>720p</option></select></div>
+    </details>
+    <div class="field-group"><label>Visibility</label><select class="selectbox" id="u-vis"><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></div>`;
+  detHost.append(det);
+  const foot=el("div",{style:"display:flex;gap:10px;justify-content:flex-end;margin-top:16px"}); detHost.append(foot);
+  const pub=el("button",{class:"btn brand big"},kind==="live"?"Go live":"Publish"); const setLbl=t=>{pub.textContent=t;};
+  pub.onclick=async()=>{ const title=det.querySelector("#u-title").value.trim(); if(!title){toast("Add a title first");return;}
+    const linkEl=drop.querySelector("#u-link"); const link=linkEl?linkEl.value.trim():"";
+    if(kind!=="live" && !state.file && !link){ toast("Choose a video file or paste a link first.",{type:"err"}); return; }
+    pub.disabled=true;
+    try{ let src="",srcType="",embedUrl="",poster="";
+      if(state.file){ setLbl("Uploading… 0%"); const up=await API.upload(state.file,p=>setLbl("Uploading… "+Math.round(p*100)+"%")); src=up.src; srcType="file"; setLbl("Finishing…");
+        if(state.posterBlob){ try{ const pu=await API.upload(state.posterBlob); poster=pu.src; }catch(e){} } }
+      else if(link){ embedUrl=link; setLbl("Publishing…"); }
+      const dur=+det.querySelector("#u-dur").value || state.dur || (kind==="clip"?30:0);
+      const body={ title, desc:det.querySelector("#u-desc").value, kind:kind==="live"?"live":kind, category:det.querySelector("#u-cat").value, dur, thumbSeed:state.thumbSeed, poster, src, srcType, embedUrl,
+        tags:det.querySelector("#u-tags").value.split(",").map(t=>t.trim()).filter(Boolean), hashtags:(det.querySelector("#u-desc").value.match(/#[\w]+/g)||[]),
+        captions:det.querySelector("#u-cc")?.checked, allowComments:det.querySelector("#u-com")?.checked, allowRemix:det.querySelector("#u-rmx")?.checked, resolution:det.querySelector("#u-res")?.value||"1080p", visibility:det.querySelector("#u-vis").value };
+      const {video}=await API.post("/api/videos",body); if(state.posterUrl){try{URL.revokeObjectURL(state.posterUrl);}catch(e){}}
+      toast(kind==="live"?"You're live 🔴":"Published 🎉",{type:"ok"}); go(kind==="clip"?"/clip/"+video.id:"/watch/"+video.id);
+    }catch(e){ toast(e.message,{type:"err"}); pub.disabled=false; setLbl(kind==="live"?"Go live":"Publish"); } };
+  foot.append(el("button",{class:"btn",onclick:()=>go("/studio")},"Cancel"),pub);
   return wrap; };
 
 /* ================================================================== CHANNEL / SEARCH / SUBS ================================================================== */
 V.channel=async(params)=>{ let data; try{ data=await API.get("/api/channels/"+params.id); }catch(e){ const w=el("div",{class:"main-pad"});w.append(emptyState("user","Channel not found",""));return w; }
   const ch=data.channel, tab=params.tab||"home", isMe=Auth.user.id===ch.id; const wrap=el("div");
-  wrap.append(el("div",{html:`<img src="${bannerURI(ch.bannerSeed)}" style="width:100%;max-height:220px;object-fit:cover" alt="">`}));
-  const pad=el("div",{class:"main-pad"});
+  wrap.append(el("div",{html:`<img src="${banSrc(ch)}" style="width:100%;max-height:220px;object-fit:cover" alt="">`}));
+  const pad=el("div",{class:"main-pad"}); wrap.append(pad);
   const head=el("div",{style:"display:flex;gap:24px;align-items:center;margin-bottom:8px;flex-wrap:wrap"});
-  head.innerHTML=`<img src="${avatarURI(ch.avatarSeed,ch.displayName)}" style="width:120px;height:120px;border-radius:50%;border:1px solid var(--glass-brd)"><div style="flex:1;min-width:240px"><h1 style="margin:0;font-size:28px;display:flex;align-items:center;gap:8px">${esc(ch.displayName)} ${vbadge(ch)}</h1><div style="color:var(--text-dim);margin:6px 0">@${esc(ch.handle)} · ${fmtN(ch.subscribers)} subscribers · ${fmtN(ch.videoCount)} videos</div><div style="color:var(--text-dim);max-width:600px">${esc(ch.bio||"No description yet.")}</div></div>`;
+  head.innerHTML=`<img src="${avaSrc(ch)}" style="width:120px;height:120px;border-radius:50%;border:1px solid var(--glass-brd)"><div style="flex:1;min-width:240px"><h1 style="margin:0;font-size:28px;display:flex;align-items:center;gap:8px">${esc(ch.displayName)} ${vbadge(ch)}</h1><div style="color:var(--text-dim);margin:6px 0">@${esc(ch.handle)} · ${fmtN(ch.subscribers)} subscribers · ${fmtN(ch.videoCount)} videos</div><div style="color:var(--text-dim);max-width:600px">${esc(ch.bio||"No description yet.")}</div></div>`;
   const btns=el("div",{style:"display:flex;gap:10px;align-items:center"});
-  if(isMe){ btns.append(el("button",{class:"btn",onclick:()=>go("/settings")},"Customize"),el("button",{class:"btn",onclick:()=>go("/studio")},"Manage videos")); } else { btns.append(subscribeBtn(ch.id)); }
+  if(isMe){ btns.append(el("button",{class:"btn",onclick:()=>go("/account")},"Customize"),el("button",{class:"btn",onclick:()=>go("/studio")},"Manage videos")); } else { btns.append(subscribeBtn(ch.id)); }
   const sB=el("button",{class:"btn icon",onclick:()=>openShare({id:ch.id})}); sB.innerHTML=icon("share",18); btns.append(sB); head.append(btns); pad.append(head);
   const tabs=el("div",{class:"tabs",style:"margin:16px 0"}); [["home","Home"],["videos","Videos"],["clips","BloxClips"],["about","About"]].forEach(([k,l])=>{const b=el("button",{class:tab===k?"active":""},l);b.onclick=()=>go("/channel/"+ch.id+(k==="home"?"":"/"+k));tabs.append(b);}); pad.append(tabs);
   const body=el("div"); pad.append(body);
@@ -1052,7 +1126,7 @@ V.search=async(params,query)=>{ const q=params.q?decodeURIComponent(params.q):(q
   const tabbar=el("div",{class:"chipbar"}); ["Videos","BloxClips","Channels"].forEach(t=>{const b=el("button",{class:"chip"+(t===state.tab?" active":"")},t);b.onclick=()=>{state.tab=t;tabbar.querySelectorAll(".chip").forEach(x=>x.classList.remove("active"));b.classList.add("active");render();};tabbar.append(b);}); wrap.append(tabbar);
   const pad=el("div",{class:"main-pad"}); wrap.append(pad); let r; try{ r=await API.get("/api/search?q="+encodeURIComponent(q)); }catch(e){ r={videos:[],clips:[],channels:[]}; }
   const render=()=>{ pad.innerHTML=`<h2 style="font-size:16px;color:var(--text-dim);margin:0 0 16px">Results for “${esc(q)}”</h2>`;
-    if(state.tab==="Channels"){ if(!r.channels.length)return pad.append(emptyState("user","No channels","")); r.channels.forEach(c=>{const row=el("div",{class:"card",style:"display:flex;gap:16px;align-items:center;margin-bottom:12px;cursor:pointer",onclick:()=>go("/channel/"+c.id)});row.innerHTML=`<img src="${avatarURI(c.avatarSeed,c.displayName)}" style="width:72px;height:72px;border-radius:50%"><div style="flex:1"><div style="font-size:17px;font-weight:700">${esc(c.displayName)} ${vbadge(c)}</div><div style="color:var(--text-dim)">@${esc(c.handle)} · ${fmtN(c.subscribers)} subscribers</div><div style="color:var(--text-dim);font-size:13px">${esc((c.bio||"").slice(0,80))}</div></div>`;const sb=subscribeBtn(c.id);sb.onclick=e=>e.stopPropagation();row.append(sb);pad.append(row);}); return; }
+    if(state.tab==="Channels"){ if(!r.channels.length)return pad.append(emptyState("user","No channels","")); r.channels.forEach(c=>{const row=el("div",{class:"card",style:"display:flex;gap:16px;align-items:center;margin-bottom:12px;cursor:pointer",onclick:()=>go("/channel/"+c.id)});row.innerHTML=`<img src="${avaSrc(c)}" style="width:72px;height:72px;border-radius:50%"><div style="flex:1"><div style="font-size:17px;font-weight:700">${esc(c.displayName)} ${vbadge(c)}</div><div style="color:var(--text-dim)">@${esc(c.handle)} · ${fmtN(c.subscribers)} subscribers</div><div style="color:var(--text-dim);font-size:13px">${esc((c.bio||"").slice(0,80))}</div></div>`;const sb=subscribeBtn(c.id);sb.onclick=e=>e.stopPropagation();row.append(sb);pad.append(row);}); return; }
     if(state.tab==="BloxClips")return pad.append(r.clips.length?gridSection(r.clips,clipCard,"compact"):emptyState("clips","No clips",""));
     if(!r.videos.length)return pad.append(emptyState("search","No results for “"+q+"”","Try different keywords."));
     r.videos.forEach(v=>{const row=el("div",{style:"margin-bottom:14px"});const c=videoCard(v);row.append(c);pad.append(c);}); };
@@ -1061,7 +1135,7 @@ V.subscriptions=async()=>{ const wrap=el("div"); const pad=el("div",{class:"main
   const head=el("div",{style:"display:flex;align-items:center;gap:12px;margin-bottom:16px"}); head.innerHTML=`<h1 style="margin:0;font-size:26px;font-weight:800;flex:1">Subscriptions</h1>`; pad.append(head);
   const [{channels},{videos}]=await Promise.all([API.get("/api/me/subscriptions"),API.get("/api/me/feed")]);
   if(!channels.length){ pad.append(emptyState("subs","No subscriptions yet","Subscribe to channels to see their latest here.",{label:"Explore",onClick:()=>go("/")})); return wrap; }
-  const strip=el("div",{class:"hscroll",style:"margin-bottom:20px"}); channels.forEach(c=>{const a=el("div",{style:"text-align:center;cursor:pointer;width:100px",onclick:()=>go("/channel/"+c.id)});a.innerHTML=`<img src="${avatarURI(c.avatarSeed,c.displayName)}" style="width:72px;height:72px;border-radius:50%;margin:0 auto"><div style="font-size:12.5px;margin-top:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.displayName)}</div>`;strip.append(a);}); pad.append(strip);
+  const strip=el("div",{class:"hscroll",style:"margin-bottom:20px"}); channels.forEach(c=>{const a=el("div",{style:"text-align:center;cursor:pointer;width:100px",onclick:()=>go("/channel/"+c.id)});a.innerHTML=`<img src="${avaSrc(c)}" style="width:72px;height:72px;border-radius:50%;margin:0 auto"><div style="font-size:12.5px;margin-top:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.displayName)}</div>`;strip.append(a);}); pad.append(strip);
   pad.append(videos.length?gridSection(videos,videoCard):emptyState("subs","Nothing new","Your subscriptions haven't posted yet.")); return wrap; };
 
 /* ================================================================== LIBRARY ================================================================== */
@@ -1072,7 +1146,7 @@ async function playlistView(pl,videos,title,ic){ const wrap=el("div"),pad=el("di
   const side=el("div"),main=el("div"); pad.append(side,main); const cover=videos[0]?thumbURI(videos[0].thumbSeed):thumbURI(pl.id||"pl");
   side.innerHTML=`<div style="position:sticky;top:16px"><div class="card" style="padding:0;overflow:hidden"><img src="${cover}" style="width:100%;aspect-ratio:16/9;object-fit:cover"><div style="padding:16px"><h1 style="margin:0 0 6px;font-size:22px">${esc(title||pl.name)}</h1><div style="color:var(--text-dim);font-size:13px">${videos.length} videos</div><div style="display:flex;gap:8px;margin-top:14px"><button class="btn brand" id="pl-play">${icon("play",18)} Play all</button></div></div></div></div>`;
   side.querySelector("#pl-play").onclick=()=>{if(videos[0])go("/watch/"+videos[0].id);};
-  if(!videos.length)main.append(emptyState("save","Empty","Save videos here from the Save menu.")); videos.forEach((v,i)=>{const row=el("div",{style:"display:flex;gap:12px;align-items:center;padding:6px;border-radius:12px;cursor:pointer",onclick:()=>go("/watch/"+v.id)});row.onmouseenter=()=>row.style.background="var(--glass)";row.onmouseleave=()=>row.style.background="";row.innerHTML=`<span style="width:24px;text-align:center;color:var(--text-faint)">${i+1}</span><img src="${thumbURI(v.thumbSeed)}" style="width:130px;aspect-ratio:16/9;border-radius:10px;object-fit:cover"><div style="flex:1;min-width:0"><div style="font-weight:700;font-size:14px">${esc(v.title)}</div><div style="color:var(--text-dim);font-size:12.5px">${esc((v.owner||{}).displayName)} · ${fmtN(v.views)} views</div></div>`;main.append(row);}); return wrap; }
+  if(!videos.length)main.append(emptyState("save","Empty","Save videos here from the Save menu.")); videos.forEach((v,i)=>{const row=el("div",{style:"display:flex;gap:12px;align-items:center;padding:6px;border-radius:12px;cursor:pointer",onclick:()=>go("/watch/"+v.id)});row.onmouseenter=()=>row.style.background="var(--glass)";row.onmouseleave=()=>row.style.background="";row.innerHTML=`<span style="width:24px;text-align:center;color:var(--text-faint)">${i+1}</span><img src="${vidPoster(v)}" style="width:130px;aspect-ratio:16/9;border-radius:10px;object-fit:cover"><div style="flex:1;min-width:0"><div style="font-weight:700;font-size:14px">${esc(v.title)}</div><div style="color:var(--text-dim);font-size:12.5px">${esc((v.owner||{}).displayName)} · ${fmtN(v.views)} views</div></div>`;main.append(row);}); return wrap; }
 async function systemPlaylist(system,title,ic){ const {playlists}=await API.get("/api/me/playlists"); const pl=playlists.find(p=>p.system===system)||{name:title,items:[]}; let videos=[]; if(pl.id){ try{ videos=(await API.get("/api/playlists/"+pl.id)).videos; }catch(e){} } return playlistView(pl,videos,title,ic); }
 V.watchlater=()=>systemPlaylist("watchlater","Watch later","watchlater");
 V.liked=()=>systemPlaylist("liked","Liked videos","liked");
@@ -1118,9 +1192,21 @@ function openShortcuts(){ const rows=[["Space / K","Play / pause"],["J / L","Bac
 V.account=async(params)=>{ const tab=params.tab||"overview"; const wrap=el("div",{class:"main-pad"}); const grid=el("div",{style:"display:grid;grid-template-columns:220px minmax(0,1fr);gap:28px;max-width:1000px"});
   const items=[["overview","user","Account"],["security","lock","Security"],["privacy","shield","Privacy"]]; const nav=el("div"); nav.innerHTML=items.map(i=>`<div class="sn-item ${i[0]===tab?"active":""}" data-nav="/account${i[0]==="overview"?"":"/"+i[0]}">${icon(i[1],20)}<span>${i[2]}</span></div>`).join(""); grid.append(nav); const c=el("div"); grid.append(c); wrap.append(grid);
   if(tab==="overview"){ c.append(pageHead("Your account",Auth.user.email||("@"+Auth.user.handle)));
-    const card=el("div",{class:"card",style:"margin-bottom:16px"}); card.innerHTML=`<div style="display:flex;gap:16px;align-items:center"><img src="${avatarURI(Auth.user.avatarSeed,Auth.user.displayName)}" style="width:72px;height:72px;border-radius:50%"><div style="flex:1"><h3 style="margin:0">${esc(Auth.user.displayName)}</h3><div style="color:var(--text-dim)">@${esc(Auth.user.handle)} · ${Auth.user.role}</div></div></div>`; c.append(card);
-    const form=el("div",{class:"card"}); form.innerHTML=`<b>Edit profile</b><div class="field-group" style="margin-top:12px"><label>Display name</label><input class="input" id="p-name" value="${esc(Auth.user.displayName)}"></div><div class="field-group"><label>Bio</label><textarea class="textarea" id="p-bio">${esc(Auth.user.bio||"")}</textarea></div><div class="field-group"><label>Location</label><input class="input" id="p-loc" value="${esc(Auth.user.location||"")}"></div>`;
-    form.append(el("button",{class:"btn brand",onclick:async()=>{try{const{user}=await API.patch("/api/me",{displayName:form.querySelector("#p-name").value,bio:form.querySelector("#p-bio").value,location:form.querySelector("#p-loc").value});Auth.user=user;toast("Profile saved",{type:"ok"});App.start();}catch(e){toast(e.message,{type:"err"});}}},"Save")); c.append(form);
+    const card=el("div",{class:"card",style:"margin-bottom:16px"}); card.innerHTML=`<div style="display:flex;gap:16px;align-items:center"><img src="${avaSrc(Auth.user)}" style="width:72px;height:72px;border-radius:50%"><div style="flex:1"><h3 style="margin:0">${esc(Auth.user.displayName)}</h3><div style="color:var(--text-dim)">@${esc(Auth.user.handle)} · ${Auth.user.role}</div></div></div>`; c.append(card);
+    const draft={ avatarUrl:Auth.user.avatarUrl||"", bannerUrl:Auth.user.bannerUrl||"" };
+    const form=el("div",{class:"card"}); form.append(el("b",{},"Edit profile"));
+    const ban=el("div",{style:"margin-top:12px;height:120px;border-radius:12px;background-size:cover;background-position:center;background-image:url(\""+banSrc(Auth.user)+"\")"});
+    const avaRow=el("div",{style:"display:flex;align-items:center;gap:12px;margin:12px 0;flex-wrap:wrap"});
+    const ava=el("img",{src:avaSrc(Auth.user),style:"width:80px;height:80px;border-radius:50%;object-fit:cover;background:var(--glass-2)"});
+    const avaBtn=el("button",{class:"btn sm"}); avaBtn.innerHTML=icon("edit",14)+" Change photo";
+    const banBtn=el("button",{class:"btn sm"}); banBtn.innerHTML=icon("edit",14)+" Change banner";
+    avaRow.append(ava,avaBtn,banBtn);
+    const uploadTo=(onUrl,onPrev)=>pickImage("image/*",async(f)=>{ const t=toast("Uploading image…"); try{ const src=await uploadImage(f); onUrl(src); onPrev(src); t&&t.remove&&t.remove(); toast("Uploaded — press Save to apply",{type:"ok"}); }catch(e){ t&&t.remove&&t.remove(); toast(e.message,{type:"err"}); } });
+    avaBtn.onclick=()=>uploadTo(u=>draft.avatarUrl=u,u=>ava.src=u);
+    banBtn.onclick=()=>uploadTo(u=>draft.bannerUrl=u,u=>ban.style.backgroundImage='url("'+u+'")');
+    const fields=el("div"); fields.innerHTML=`<div class="field-group"><label>Display name</label><input class="input" id="p-name" value="${esc(Auth.user.displayName)}"></div><div class="field-group"><label>Bio</label><textarea class="textarea" id="p-bio">${esc(Auth.user.bio||"")}</textarea></div><div class="field-group"><label>Location</label><input class="input" id="p-loc" value="${esc(Auth.user.location||"")}"></div>`;
+    form.append(ban,avaRow,fields);
+    form.append(el("button",{class:"btn brand",onclick:async()=>{try{const{user}=await API.patch("/api/me",{displayName:fields.querySelector("#p-name").value,bio:fields.querySelector("#p-bio").value,location:fields.querySelector("#p-loc").value,avatarUrl:draft.avatarUrl,bannerUrl:draft.bannerUrl});Auth.user=user;toast("Profile saved",{type:"ok"});App.start();}catch(e){toast(e.message,{type:"err"});}}},"Save")); c.append(form);
     c.append(settingRow("BloxTube Plus",Auth.user.plus?"Active 💛":"Not subscribed",el("button",{class:"btn sm",onclick:()=>go("/plus")},Auth.user.plus?"Manage":"Get Plus")));
     c.append(settingRow("Sign out","End this session",el("button",{class:"btn sm",onclick:()=>App.signOut()},"Sign out")));
   } else if(tab==="security"){ c.append(pageHead("Security","Manage sign-in and sessions"));
@@ -1146,7 +1232,7 @@ function chartBars(items,{h=200,pad=30}={}){ const w=680,max=Math.max(1,...items
 const STUDIO_NAV=[["dashboard","home","Dashboard","/studio"],["content","library","Content","/studio/content"],["analytics","chart","Analytics","/studio/analytics"],["upload","upload","Upload","/studio/upload"]];
 function studioLayout(active,content){ const ws=el("div",{class:"workspace"}); const nav=el("div",{class:"ws-nav"});
   nav.innerHTML=`<div class="ws-brand">${LOGO}<span>Studio</span></div>`+STUDIO_NAV.map(i=>`<div class="sn-item ${i[0]===active?"active":""}" data-nav="${i[3]}">${icon(i[1],20)}<span>${i[2]}</span></div>`).join("")+`<div class="sn-sep"></div><div class="sn-item" data-nav="/">${icon("arrowleft",20)}<span>Back to BloxTube</span></div>`;
-  const main=el("div",{class:"ws-main"}); const head=el("div",{class:"ws-head"}); head.innerHTML=`<img class="chan-ava" src="${avatarURI(Auth.user.avatarSeed,Auth.user.displayName)}"><div style="flex:1"><h1>Your channel</h1><div style="color:var(--text-dim);font-size:13.5px">${esc(Auth.user.displayName)} · @${esc(Auth.user.handle)}</div></div>`; const up=el("button",{class:"btn brand",onclick:()=>go("/studio/upload")}); up.innerHTML=icon("upload",18)+" Upload"; head.append(up); main.append(head,content); ws.append(nav,main); return ws; }
+  const main=el("div",{class:"ws-main"}); const head=el("div",{class:"ws-head"}); head.innerHTML=`<img class="chan-ava" src="${avaSrc(Auth.user)}"><div style="flex:1"><h1>Your channel</h1><div style="color:var(--text-dim);font-size:13.5px">${esc(Auth.user.displayName)} · @${esc(Auth.user.handle)}</div></div>`; const up=el("button",{class:"btn brand",onclick:()=>go("/studio/upload")}); up.innerHTML=icon("upload",18)+" Upload"; head.append(up); main.append(head,content); ws.append(nav,main); return ws; }
 V.studio=async(params)=>{ const tab=params.tab||"dashboard"; if(tab==="upload")return V.upload({},new URLSearchParams()); const c=el("div");
   const {videos}=await API.get("/api/videos?ownerId="+Auth.user.id+"&limit=200");
   if(tab==="dashboard"){ const views=sum(videos.map(v=>v.views)),likes=sum(videos.map(v=>v.likes)),comments=sum(videos.map(v=>v.commentCount));
@@ -1157,7 +1243,7 @@ V.studio=async(params)=>{ const tab=params.tab||"dashboard"; if(tab==="upload")r
   } else if(tab==="content"){ c.innerHTML=`<h2 style="margin:0 0 16px">Content</h2>`;
     if(!videos.length){c.append(emptyState("library","No content","Upload something to manage it here.",{label:"Upload",onClick:()=>go("/studio/upload")}));return studioLayout("content",c);}
     const tbl=el("table",{class:"data"}); tbl.innerHTML=`<thead><tr><th>Video</th><th>Visibility</th><th>Date</th><th>Views</th><th>Likes</th><th>Comments</th><th></th></tr></thead>`; const tb=el("tbody");
-    videos.forEach(v=>{const tr=el("tr");tr.innerHTML=`<td><div style="display:flex;gap:10px;align-items:center"><img src="${thumbURI(v.thumbSeed)}" style="width:80px;aspect-ratio:16/9;border-radius:7px;object-fit:cover"><div style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">${esc(v.title)}</div></div></td><td>${icon(v.visibility==="private"?"lock":v.visibility==="unlisted"?"link":"globe",14)} ${v.visibility}</td><td>${dateStr(v.createdAt)}</td><td>${fmtN(v.views)}</td><td>${fmtN(v.likes)}</td><td>${fmtN(v.commentCount)}</td><td><button class="icon-btn" data-m>${icon("morev",18)}</button></td>`;
+    videos.forEach(v=>{const tr=el("tr");tr.innerHTML=`<td><div style="display:flex;gap:10px;align-items:center"><img src="${vidPoster(v)}" style="width:80px;aspect-ratio:16/9;border-radius:7px;object-fit:cover"><div style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">${esc(v.title)}</div></div></td><td>${icon(v.visibility==="private"?"lock":v.visibility==="unlisted"?"link":"globe",14)} ${v.visibility}</td><td>${dateStr(v.createdAt)}</td><td>${fmtN(v.views)}</td><td>${fmtN(v.likes)}</td><td>${fmtN(v.commentCount)}</td><td><button class="icon-btn" data-m>${icon("morev",18)}</button></td>`;
       tr.querySelector("[data-m]").onclick=e=>openMenu(e.currentTarget,[{icon:"eye",label:"View",onClick:()=>go((v.kind==="clip"?"/clip/":"/watch/")+v.id)},{icon:"chart",label:"Analytics",onClick:()=>go("/studio/analytics")},"sep",{icon:"trash",label:"Delete",danger:true,onClick:()=>confirmModal("Delete video?","This can't be undone.",async()=>{await API.del("/api/videos/"+v.id);tr.remove();toast("Deleted");},{danger:true,yes:"Delete"})}]); tb.append(tr);}); tbl.append(tb); c.append(tbl);
   } else { c.innerHTML=`<h2 style="margin:0 0 16px">Analytics</h2>`; const views=sum(videos.map(v=>v.views));
     const tiles=el("div",{class:"tiles"}); [["Views",fmtN(views)],["Likes",fmtN(sum(videos.map(v=>v.likes)))],["Comments",fmtN(sum(videos.map(v=>v.commentCount)))],["Avg views/video",videos.length?fmtN(Math.round(views/videos.length)):"0"]].forEach(x=>{const t=el("div",{class:"stat-tile"});t.innerHTML=`<div class="k">${x[0]}</div><div class="v">${x[1]}</div>`;tiles.append(t);}); c.append(tiles);
@@ -1186,9 +1272,12 @@ async function renderAdminTab(tab,c){
     const host=el("div"); c.append(host);
     const load=async(q)=>{ const {users}=await API.get("/api/admin/users"+(q?"?q="+encodeURIComponent(q):"")); host.innerHTML="";
       const tbl=el("table",{class:"data"}); tbl.innerHTML=`<thead><tr><th>User</th><th>Email</th><th>Role</th><th>Status</th><th>Subs</th><th>Joined</th><th></th></tr></thead>`; const tb=el("tbody");
-      users.forEach(u=>{ const tr=el("tr"); tr.innerHTML=`<td><div style="display:flex;gap:10px;align-items:center"><img src="${avatarURI(u.avatarSeed,u.displayName)}" style="width:34px;height:34px;border-radius:50%"><div><div style="font-weight:600">${esc(u.displayName)} ${vbadge(u)}</div><div style="color:var(--text-faint);font-size:12px">@${esc(u.handle)}</div></div></div></td><td style="color:var(--text-dim)">${esc(u.email||"")}</td><td><span class="pill role">${u.role}</span></td><td>${u.status==="active"?'<span class="pill ok">active</span>':'<span class="pill" style="background:var(--danger);color:#fff">'+u.status+'</span>'}</td><td>${fmtN(u.subscribers)}</td><td>${dateStr(u.createdAt)}</td><td><button class="icon-btn" data-m>${icon("morev",18)}</button></td>`;
+      users.forEach(u=>{ const tr=el("tr"); tr.innerHTML=`<td><div style="display:flex;gap:10px;align-items:center"><img src="${avaSrc(u)}" style="width:34px;height:34px;border-radius:50%"><div><div style="font-weight:600">${esc(u.displayName)} ${vbadge(u)}</div><div style="color:var(--text-faint);font-size:12px">@${esc(u.handle)}</div></div></div></td><td style="color:var(--text-dim)">${esc(u.email||"")}</td><td><span class="pill role">${u.role}</span></td><td>${u.status==="active"?'<span class="pill ok">active</span>':'<span class="pill" style="background:var(--danger);color:#fff">'+u.status+'</span>'}</td><td>${fmtN(u.subscribers)}</td><td>${dateStr(u.createdAt)}</td><td><button class="icon-btn" data-m>${icon("morev",18)}</button></td>`;
         tr.querySelector("[data-m]").onclick=e=>{ const isOwner=u.role==="owner"; openMenu(e.currentTarget,[
-          {icon:"verified",label:u.verified?"Remove verification":"Verify (official)",onClick:()=>adminUser(u.id,{verified:u.verified?"":"official"},tr,load,inp)},
+          {icon:"verified",label:"Verify — Official"+(u.verified==="official"?" ✓":""),onClick:()=>adminUser(u.id,{verified:"official"},tr,load,inp)},
+          {icon:"verified",label:"Verify — Artist"+(u.verified==="artist"?" ✓":""),onClick:()=>adminUser(u.id,{verified:"artist"},tr,load,inp)},
+          {icon:"verified",label:"Verify — Business"+(u.verified==="business"?" ✓":""),onClick:()=>adminUser(u.id,{verified:"business"},tr,load,inp)},
+          {icon:"close",label:"Remove verification",onClick:()=>adminUser(u.id,{verified:""},tr,load,inp)},
           {icon:"user",label:"Make admin",onClick:()=>adminUser(u.id,{role:"admin"},tr,load,inp)},
           {icon:"user",label:"Make user",onClick:()=>adminUser(u.id,{role:"user"},tr,load,inp)},
           "sep",
@@ -1201,7 +1290,7 @@ async function renderAdminTab(tab,c){
   if(tab==="content"){ c.innerHTML=`<h2 style="margin:0 0 16px;font-size:22px">Content moderation</h2>`; const {videos}=await API.get("/api/admin/content");
     if(!videos.length){c.append(emptyState("library","No content yet","Uploads appear here."));return;}
     const tbl=el("table",{class:"data"}); tbl.innerHTML=`<thead><tr><th>Video</th><th>Creator</th><th>Kind</th><th>Views</th><th>Status</th><th></th></tr></thead>`; const tb=el("tbody");
-    videos.forEach(v=>{const tr=el("tr");tr.innerHTML=`<td><div style="display:flex;gap:10px;align-items:center"><img src="${thumbURI(v.thumbSeed)}" style="width:70px;aspect-ratio:16/9;border-radius:6px;object-fit:cover"><div style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">${esc(v.title)}</div></div></td><td>${esc((v.owner||{}).displayName||"?")}</td><td>${v.kind}</td><td>${fmtN(v.views)}</td><td>${v.status==="removed"?'<span class="pill" style="background:var(--danger);color:#fff">removed</span>':'<span class="pill ok">'+v.status+'</span>'}</td><td><button class="icon-btn" data-m>${icon("morev",18)}</button></td>`;
+    videos.forEach(v=>{const tr=el("tr");tr.innerHTML=`<td><div style="display:flex;gap:10px;align-items:center"><img src="${vidPoster(v)}" style="width:70px;aspect-ratio:16/9;border-radius:6px;object-fit:cover"><div style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">${esc(v.title)}</div></div></td><td>${esc((v.owner||{}).displayName||"?")}</td><td>${v.kind}</td><td>${fmtN(v.views)}</td><td>${v.status==="removed"?'<span class="pill" style="background:var(--danger);color:#fff">removed</span>':'<span class="pill ok">'+v.status+'</span>'}</td><td><button class="icon-btn" data-m>${icon("morev",18)}</button></td>`;
       tr.querySelector("[data-m]").onclick=e=>openMenu(e.currentTarget,[{icon:"eye",label:"View",onClick:()=>go((v.kind==="clip"?"/clip/":"/watch/")+v.id)},{icon:"warn",label:v.status==="removed"?"Restore":"Hide (removed)",onClick:async()=>{try{await API.patch("/api/admin/videos/"+v.id,{status:v.status==="removed"?"published":"removed"});toast("Updated · logged");App.route();}catch(x){toast(x.message,{type:"err"});}}},"sep",{icon:"trash",label:"Delete permanently",danger:true,onClick:()=>confirmModal("Delete content?","Permanently removes “"+v.title+"”.",async()=>{await API.del("/api/admin/videos/"+v.id);tr.remove();toast("Deleted · logged");},{danger:true,yes:"Delete"})}]); tb.append(tr);}); tbl.append(tb); c.append(tbl); return; }
   if(tab==="reports"){ c.innerHTML=`<h2 style="margin:0 0 8px;font-size:22px">Reports queue</h2><p style="color:var(--text-dim);margin:0 0 16px">Automated and user reports. Every action is logged to the audit trail.</p>`;
     const {reports}=await API.get("/api/admin/reports"); if(!reports.length){c.append(emptyState("check","No reports","Nothing needs review right now ✨"));return;}
